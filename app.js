@@ -15,7 +15,7 @@ const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET || 'ff89f01585f2b68301b8f8911174cd87'
 };
 
-// API Keys
+// API Keys - 修正版本
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyBWCitsjkm7DPe_aREubKIZjqmgXafVKNE';
 const NEWS_API_KEY = process.env.NEWS_API_KEY || '5807e3e70bd2424584afdfc6e932108b';
 const TMDB_API_KEY = process.env.TMDB_API_KEY || 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIyMzI4YmU1YzdhNDA1OTczZDdjMjA0NDlkYmVkOTg4OCIsIm5iZiI6MS43NDYwNzg5MDI5MTgwMDAyZSs5LCJzdWIiOiI2ODEzMGNiNjgyODI5Y2NhNzExZmJkNDkiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.FQlIdfWlf4E0Tw9sYRF7txbWymAby77KnHjTVNFSpdM';
@@ -32,7 +32,7 @@ const conversationHistory = new Map();
 
 // 健康檢查端點
 app.get('/', (req, res) => {
-  res.send('LINE Bot is running!');
+  res.send('LINE Bot is running! All APIs ready.');
 });
 
 // Webhook 端點
@@ -85,6 +85,8 @@ async function handleEvent(event) {
   const userId = event.source.userId;
   const messageText = event.message.text.trim();
   
+  console.log('收到訊息:', messageText, '來自用戶:', userId);
+  
   // 初始化用戶對話歷史
   if (!conversationHistory.has(userId)) {
     conversationHistory.set(userId, []);
@@ -110,12 +112,16 @@ async function handleEvent(event) {
       replyMessage = await createMainMenu();
       return client.replyMessage(event.replyToken, replyMessage);
     } else if (isWeatherQuery(messageText)) {
+      console.log('處理天氣查詢:', messageText);
       replyMessage = await handleWeatherQuery(messageText);
     } else if (isMovieQuery(messageText)) {
+      console.log('處理電影查詢:', messageText);
       replyMessage = await handleMovieQuery(messageText);
     } else if (isNewsQuery(messageText)) {
+      console.log('處理新聞查詢:', messageText);
       replyMessage = await handleNewsQuery(messageText);
     } else {
+      console.log('處理一般對話:', messageText);
       // 使用 Gemini 進行一般對話
       const textReply = await handleGeneralChat(messageText, userHistory, event.source);
       replyMessage = {
@@ -137,6 +143,7 @@ async function handleEvent(event) {
       };
     }
     
+    console.log('準備回覆:', replyMessage);
     return client.replyMessage(event.replyToken, replyMessage);
   } catch (error) {
     console.error('處理訊息時發生錯誤:', error);
@@ -249,10 +256,13 @@ async function createMainMenu() {
   };
 }
 
-// 處理天氣查詢
+// 處理天氣查詢 - 修正版本
 async function handleWeatherQuery(text) {
   try {
+    console.log('天氣查詢開始，文字:', text);
     let city = extractCityFromText(text);
+    console.log('提取到的城市:', city);
+    
     if (!city) {
       return {
         type: 'template',
@@ -272,26 +282,36 @@ async function handleWeatherQuery(text) {
       };
     }
 
+    // 使用修正的 API endpoint
+    console.log('準備請求天氣 API，城市:', city);
     const response = await axios.get('https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001', {
       params: {
         Authorization: WEATHER_API_KEY,
         locationName: city
-      }
+      },
+      timeout: 10000
     });
 
-    if (response.data.success === 'true' && response.data.records.location.length > 0) {
+    console.log('天氣 API 回應狀態:', response.status);
+    console.log('天氣 API 回應 success:', response.data.success);
+
+    if (response.data.success === 'true' && response.data.records?.location?.length > 0) {
       const location = response.data.records.location[0];
       const weather = location.weatherElement;
+      
+      console.log('找到天氣資料，位置:', location.locationName);
       
       const temp = weather.find(el => el.elementName === 'MinT');
       const maxTemp = weather.find(el => el.elementName === 'MaxT');
       const desc = weather.find(el => el.elementName === 'Wx');
       const pop = weather.find(el => el.elementName === 'PoP');
       
-      const minTempValue = temp?.time[0]?.parameter?.parameterName || 'N/A';
-      const maxTempValue = maxTemp?.time[0]?.parameter?.parameterName || 'N/A';
-      const weatherDesc = desc?.time[0]?.parameter?.parameterName || 'N/A';
-      const rainProb = pop?.time[0]?.parameter?.parameterName || 'N/A';
+      const minTempValue = temp?.time?.[0]?.parameter?.parameterName || 'N/A';
+      const maxTempValue = maxTemp?.time?.[0]?.parameter?.parameterName || 'N/A';
+      const weatherDesc = desc?.time?.[0]?.parameter?.parameterName || 'N/A';
+      const rainProb = pop?.time?.[0]?.parameter?.parameterName || 'N/A';
+
+      console.log('天氣資料:', { minTempValue, maxTempValue, weatherDesc, rainProb });
 
       let weatherImage = 'https://images.unsplash.com/photo-1504608524841-42fe6f032b4b?w=400&h=300&fit=crop';
       if (weatherDesc.includes('晴')) {
@@ -315,17 +335,21 @@ async function handleWeatherQuery(text) {
         }
       };
     } else {
-      return '抱歉，找不到該城市的天氣資訊。請嘗試：台北天氣、台中天氣、高雄天氣等。';
+      console.log('天氣 API 沒有找到資料');
+      return '抱歉，找不到 ' + city + ' 的天氣資訊。請嘗試：台北天氣、台中天氣、高雄天氣等。';
     }
   } catch (error) {
-    console.error('天氣查詢錯誤:', error);
-    return '抱歉，無法獲取天氣資訊，請稍後再試。';
+    console.error('天氣查詢錯誤:', error.message);
+    console.error('錯誤詳情:', error.response?.data || error);
+    return '抱歉，無法獲取天氣資訊，請稍後再試。（錯誤：' + error.message + '）';
   }
 }
 
-// 處理電影查詢
+// 處理電影查詢 - 修正版本
 async function handleMovieQuery(text) {
   try {
+    console.log('電影查詢開始，文字:', text);
+    
     let endpoint = 'movie/popular';
     let title = '熱門電影推薦';
     
@@ -337,6 +361,7 @@ async function handleMovieQuery(text) {
       title = '高評分電影推薦';
     }
 
+    console.log('準備請求電影 API，endpoint:', endpoint);
     const response = await axios.get('https://api.themoviedb.org/3/' + endpoint, {
       headers: {
         'Authorization': 'Bearer ' + TMDB_API_KEY,
@@ -345,10 +370,13 @@ async function handleMovieQuery(text) {
       params: {
         language: 'zh-TW',
         page: 1
-      }
+      },
+      timeout: 10000
     });
 
-    const movies = response.data.results.slice(0, 5);
+    console.log('電影 API 回應狀態:', response.status);
+    const movies = response.data.results?.slice(0, 5) || [];
+    console.log('找到電影數量:', movies.length);
     
     if (movies.length === 0) {
       return '抱歉，目前無法獲取電影資訊。';
@@ -366,7 +394,7 @@ async function handleMovieQuery(text) {
       return {
         thumbnailImageUrl: imageUrl,
         title: movie.title.length > 40 ? movie.title.substring(0, 37) + '...' : movie.title,
-        text: '評分：' + movie.vote_average + '/10\n上映：' + movie.release_date + '\n' + overview,
+        text: '評分：' + movie.vote_average + '/10\n上映：' + (movie.release_date || 'TBA') + '\n' + overview,
         actions: [
           { type: 'message', label: '更多推薦', text: '推薦更多電影' },
           { type: 'message', label: '返回選單', text: '選單' }
@@ -383,14 +411,17 @@ async function handleMovieQuery(text) {
       }
     };
   } catch (error) {
-    console.error('電影查詢錯誤:', error);
-    return '抱歉，無法獲取電影資訊，請稍後再試。';
+    console.error('電影查詢錯誤:', error.message);
+    console.error('錯誤詳情:', error.response?.data || error);
+    return '抱歉，無法獲取電影資訊，請稍後再試。（錯誤：' + error.message + '）';
   }
 }
 
-// 處理新聞查詢
+// 處理新聞查詢 - 修正版本
 async function handleNewsQuery(text) {
   try {
+    console.log('新聞查詢開始，文字:', text);
+    
     let category = '';
     let title = '今日頭條新聞';
     
@@ -400,6 +431,9 @@ async function handleNewsQuery(text) {
     } else if (text.includes('娛樂')) {
       category = 'entertainment';
       title = '娛樂新聞';
+    } else if (text.includes('體育') || text.includes('運動')) {
+      category = 'sports';
+      title = '體育新聞';
     }
 
     const params = {
@@ -412,11 +446,23 @@ async function handleNewsQuery(text) {
       params.category = category;
     }
 
-    const response = await axios.get('https://newsapi.org/v2/top-headlines', { params });
+    console.log('準備請求新聞 API，參數:', params);
+    const response = await axios.get('https://newsapi.org/v2/top-headlines', { 
+      params,
+      timeout: 10000
+    });
 
-    const articles = response.data.articles.filter(article => 
-      article.title && article.description && !article.title.includes('[Removed]')
+    console.log('新聞 API 回應狀態:', response.status);
+    console.log('新聞 API 總數:', response.data.totalResults);
+
+    const articles = (response.data.articles || []).filter(article => 
+      article.title && 
+      article.description && 
+      !article.title.includes('[Removed]') &&
+      article.title !== '[Removed]'
     ).slice(0, 5);
+    
+    console.log('過濾後新聞數量:', articles.length);
     
     if (articles.length === 0) {
       return '抱歉，目前無法獲取新聞資訊。';
@@ -448,14 +494,17 @@ async function handleNewsQuery(text) {
       }
     };
   } catch (error) {
-    console.error('新聞查詢錯誤:', error);
-    return '抱歉，無法獲取新聞資訊，請稍後再試。';
+    console.error('新聞查詢錯誤:', error.message);
+    console.error('錯誤詳情:', error.response?.data || error);
+    return '抱歉，無法獲取新聞資訊，請稍後再試。（錯誤：' + error.message + '）';
   }
 }
 
-// 處理一般對話
+// 處理一般對話 - 修正版本
 async function handleGeneralChat(message, history, source) {
   try {
+    console.log('一般對話開始，訊息:', message);
+    
     const model = genAI.getGenerativeModel({ model: "gemini-pro" });
     
     let context = '你是一個友善的LINE聊天機器人，名字叫做「小助手」。請用繁體中文回答，語氣要自然、友善。';
@@ -478,15 +527,19 @@ async function handleGeneralChat(message, history, source) {
     context += '\n\n請回應用戶的訊息：' + message;
     context += '\n\n注意：回覆要自然、簡潔，不要包含特殊符號。';
 
+    console.log('準備請求 Gemini API');
     const result = await model.generateContent(context);
     const response = await result.response;
     let text = response.text();
+    
+    console.log('收到 Gemini 回應:', text);
     
     text = text.replace(/[*#`_~\[\]]/g, '').trim();
     
     return text || '我現在有點忙，稍後再聊！';
   } catch (error) {
-    console.error('Gemini API 錯誤:', error);
+    console.error('Gemini API 錯誤:', error.message);
+    console.error('錯誤詳情:', error);
     
     const smartResponses = [
       '這個問題很有趣！不過我需要想一下',
@@ -520,9 +573,10 @@ function extractCityFromText(text) {
 
 // 啟動伺服器
 app.listen(PORT, '0.0.0.0', () => {
-  console.log('LINE Bot 伺服器成功啟動！');
-  console.log('伺服器運行在端口 ' + PORT);
-  console.log('Webhook URL: /webhook');
+  console.log('✅ LINE Bot 伺服器成功啟動！');
+  console.log('🌐 伺服器運行在端口 ' + PORT);
+  console.log('📍 Webhook URL: /webhook');
+  console.log('🔑 API Keys 設定完成');
 });
 
 // 處理未捕獲的異常
