@@ -1,6 +1,7 @@
 const express = require('express');
 const line = require('@line/bot-sdk');
 const axios = require('axios');
+const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 const app = express();
@@ -29,22 +30,49 @@ const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 // 儲存對話歷史 (簡單的記憶體儲存)
 const conversationHistory = new Map();
 
-// 中間件
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
-
 // 健康檢查端點
 app.get('/', (req, res) => {
   res.send('LINE Bot is running!');
 });
 
-// Webhook 端點
-app.post('/webhook', line.middleware(config), (req, res) => {
+// Webhook 端點 - 先處理原始數據
+app.post('/webhook', express.raw({type: 'application/json'}), (req, res) => {
+  const signature = req.get('X-Line-Signature');
+  
+  if (!signature) {
+    console.log('缺少簽名標頭');
+    return res.status(401).send('缺少簽名標頭');
+  }
+
+  // 驗證簽名
+  const body = req.body.toString();
+  const crypto = require('crypto');
+  const hash = crypto
+    .createHmac('SHA256', config.channelSecret)
+    .update(body)
+    .digest('base64');
+
+  if (signature !== hash) {
+    console.log('簽名驗證失敗');
+    return res.status(401).send('簽名驗證失敗');
+  }
+
+  // 解析 JSON
+  let events;
+  try {
+    const parsedBody = JSON.parse(body);
+    events = parsedBody.events;
+  } catch (error) {
+    console.error('JSON 解析錯誤:', error);
+    return res.status(400).send('無效的 JSON');
+  }
+
+  // 處理事件
   Promise
-    .all(req.body.events.map(handleEvent))
+    .all(events.map(handleEvent))
     .then((result) => res.json(result))
     .catch((err) => {
-      console.error(err);
+      console.error('處理事件錯誤:', err);
       res.status(500).end();
     });
 });
