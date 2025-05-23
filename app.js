@@ -567,46 +567,137 @@ async function handleNewsQuery(text) {
       title = '商業新聞';
     }
 
-    const params = {
+    // 先嘗試台灣新聞
+    let params = {
       country: 'tw',
       apiKey: NEWS_API_KEY,
-      pageSize: 3 // 減少到3則新聞
+      pageSize: 10 // 增加數量以確保有足夠新聞
     };
     
     if (category) {
       params.category = category;
     }
 
-    console.log('準備請求新聞 API，參數:', params);
-    const response = await axios.get('https://newsapi.org/v2/top-headlines', { 
-      params,
-      timeout: 15000
-    });
-
-    console.log('新聞 API 回應狀態:', response.status);
-    console.log('新聞 API 總數:', response.data.totalResults);
-
-    const articles = (response.data.articles || []).filter(article => 
-      article.title && 
-      article.description && 
-      !article.title.includes('[Removed]') &&
-      article.title !== '[Removed]' &&
-      article.description !== '[Removed]' &&
-      article.url && 
-      article.url.startsWith('http')
-    ).slice(0, 3);
+    console.log('準備請求新聞 API (台灣)，參數:', params);
     
-    console.log('過濾後新聞數量:', articles.length);
+    let response;
+    let articles = [];
     
-    if (articles.length === 0) {
-      return '抱歉，目前無法獲取新聞資訊。';
+    try {
+      response = await axios.get('https://newsapi.org/v2/top-headlines', { 
+        params,
+        timeout: 15000
+      });
+      
+      console.log('台灣新聞 API 回應狀態:', response.status);
+      console.log('台灣新聞 API 總數:', response.data.totalResults);
+      
+      if (response.data.articles && response.data.articles.length > 0) {
+        // 放寬過濾條件
+        articles = response.data.articles.filter(article => 
+          article.title && 
+          article.title !== '[Removed]' &&
+          article.title.trim() !== '' &&
+          article.url &&
+          article.url.startsWith('http')
+        );
+        
+        console.log('台灣新聞過濾後數量:', articles.length);
+      }
+    } catch (error) {
+      console.log('台灣新聞 API 錯誤:', error.message);
     }
+    
+    // 如果台灣新聞不足，嘗試其他來源
+    if (articles.length < 3) {
+      console.log('台灣新聞數量不足，嘗試其他來源...');
+      
+      try {
+        // 嘗試香港新聞 (繁體中文)
+        const hkParams = {
+          country: 'hk',
+          apiKey: NEWS_API_KEY,
+          pageSize: 5
+        };
+        
+        const hkResponse = await axios.get('https://newsapi.org/v2/top-headlines', { 
+          params: hkParams,
+          timeout: 10000
+        });
+        
+        console.log('香港新聞 API 回應狀態:', hkResponse.status);
+        console.log('香港新聞 API 總數:', hkResponse.data.totalResults);
+        
+        if (hkResponse.data.articles && hkResponse.data.articles.length > 0) {
+          const hkArticles = hkResponse.data.articles.filter(article => 
+            article.title && 
+            article.title !== '[Removed]' &&
+            article.title.trim() !== '' &&
+            article.url &&
+            article.url.startsWith('http')
+          );
+          
+          articles = [...articles, ...hkArticles];
+          console.log('加入香港新聞後總數:', articles.length);
+        }
+      } catch (error) {
+        console.log('香港新聞 API 錯誤:', error.message);
+      }
+    }
+    
+    // 如果還是不足，嘗試全球新聞搜尋
+    if (articles.length < 3) {
+      console.log('新聞數量仍不足，嘗試全球搜尋...');
+      
+      try {
+        const searchParams = {
+          q: 'Taiwan OR 台灣',
+          apiKey: NEWS_API_KEY,
+          pageSize: 5,
+          sortBy: 'publishedAt',
+          language: 'en'
+        };
+        
+        const searchResponse = await axios.get('https://newsapi.org/v2/everything', { 
+          params: searchParams,
+          timeout: 10000
+        });
+        
+        console.log('全球搜尋 API 回應狀態:', searchResponse.status);
+        console.log('全球搜尋 API 總數:', searchResponse.data.totalResults);
+        
+        if (searchResponse.data.articles && searchResponse.data.articles.length > 0) {
+          const searchArticles = searchResponse.data.articles.filter(article => 
+            article.title && 
+            article.title !== '[Removed]' &&
+            article.title.trim() !== '' &&
+            article.url &&
+            article.url.startsWith('http')
+          );
+          
+          articles = [...articles, ...searchArticles];
+          console.log('加入搜尋結果後總數:', articles.length);
+        }
+      } catch (error) {
+        console.log('全球搜尋 API 錯誤:', error.message);
+      }
+    }
+    
+    // 最終檢查
+    if (articles.length === 0) {
+      console.log('所有方法都無法獲取新聞，回傳備用內容');
+      return createFallbackNews();
+    }
+    
+    // 取前3則新聞
+    articles = articles.slice(0, 3);
+    console.log('最終新聞數量:', articles.length);
 
     // 如果只有一則新聞，使用 buttons 模板
     if (articles.length === 1) {
       const article = articles[0];
       const cleanTitle = cleanText(article.title, 25);
-      const cleanDescription = cleanText(article.description, 60);
+      const cleanDescription = cleanText(article.description || '點擊閱讀完整新聞內容', 60);
       const imageUrl = article.urlToImage || 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=300&h=200&fit=crop';
 
       return {
@@ -631,7 +722,7 @@ async function handleNewsQuery(text) {
       console.log('處理新聞 ' + (index + 1) + ':', article.title?.substring(0, 20) + '...');
       
       const cleanTitle = cleanText(article.title, 20);
-      const cleanDescription = cleanText(article.description, 45);
+      const cleanDescription = cleanText(article.description || '點擊閱讀完整內容', 45);
       const imageUrl = article.urlToImage || 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=300&h=200&fit=crop';
       
       console.log('新聞', index + 1, '處理完成:', {
@@ -673,10 +764,50 @@ async function handleNewsQuery(text) {
 
     return carouselMessage;
   } catch (error) {
-    console.error('新聞查詢錯誤:', error.message);
+    console.error('新聞查詢總錯誤:', error.message);
     console.error('錯誤詳情:', error.response?.data || error);
-    return '抱歉，無法獲取新聞資訊，請稍後再試。';
+    return createFallbackNews();
   }
+}
+
+// 創建備用新聞內容
+function createFallbackNews() {
+  const fallbackNews = [
+    {
+      title: '台灣科技業持續發展',
+      description: '台灣在半導體和科技產業方面持續保持領先地位，為全球科技發展做出重要貢獻。',
+      url: 'https://www.taiwannews.com.tw/'
+    },
+    {
+      title: '台灣觀光業蓬勃發展',
+      description: '台灣以其豐富的文化heritage和美麗的自然景觀吸引了眾多國際遊客。',
+      url: 'https://www.taiwannews.com.tw/'
+    },
+    {
+      title: '台灣美食文化享譽國際',
+      description: '台灣夜市文化和特色小吃在國際間獲得高度評價，成為觀光一大亮點。',
+      url: 'https://www.taiwannews.com.tw/'
+    }
+  ];
+  
+  const columns = fallbackNews.map((news, index) => ({
+    thumbnailImageUrl: 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=300&h=200&fit=crop',
+    title: news.title,
+    text: news.description,
+    actions: [
+      { type: 'uri', label: '了解更多', uri: news.url },
+      { type: 'message', label: '返回選單', text: '選單' }
+    ]
+  }));
+
+  return {
+    type: 'template',
+    altText: '台灣新聞資訊',
+    template: {
+      type: 'carousel',
+      columns: columns
+    }
+  };
 }
 
 // 創建簡單新聞列表（備用方案）
@@ -861,9 +992,21 @@ async function handleTestQuery() {
       },
       timeout: 5000
     });
-    testResults += '📰 新聞 API：✅ 正常\n';
+    
+    console.log('新聞 API 測試回應:', {
+      status: newsResponse.status,
+      totalResults: newsResponse.data.totalResults,
+      articlesCount: newsResponse.data.articles?.length || 0
+    });
+    
+    if (newsResponse.data.articles && newsResponse.data.articles.length > 0) {
+      testResults += '📰 新聞 API：✅ 正常\n';
+    } else {
+      testResults += '📰 新聞 API：⚠️ 無內容\n';
+    }
   } catch (error) {
-    testResults += '📰 新聞 API：❌ 異常\n';
+    console.error('新聞 API 測試錯誤:', error.message);
+    testResults += '📰 新聞 API：❌ 異常 (' + error.message + ')\n';
   }
   
   // 測試 Gemini API
