@@ -384,7 +384,7 @@ async function handleWeatherQuery(text) {
   }
 }
 
-// 處理電影查詢 - 修正版本
+// 處理電影查詢 - 完全修復版本
 async function handleMovieQuery(text) {
   try {
     console.log('電影查詢開始，文字:', text);
@@ -414,58 +414,76 @@ async function handleMovieQuery(text) {
     });
 
     console.log('電影 API 回應狀態:', response.status);
-    const movies = response.data.results?.slice(0, 5) || [];
+    const movies = response.data.results?.slice(0, 3) || []; // 只取3部電影
     console.log('找到電影數量:', movies.length);
     
     if (movies.length === 0) {
       return '抱歉，目前無法獲取電影資訊。';
     }
 
-    // 清理和限制文字內容，避免 LINE API 錯誤
-    const columns = movies.map(movie => {
-      // 清理標題 - 移除特殊字符，限制長度
-      let cleanTitle = (movie.title || '未知電影')
-        .replace(/[^\w\s\u4e00-\u9fff\u3400-\u4dbf]/g, '') // 只保留中英文數字
-        .substring(0, 30); // 限制30字符
-      
-      // 清理簡介 - 移除特殊字符，限制長度  
-      let cleanOverview = '';
-      if (movie.overview) {
-        cleanOverview = movie.overview
-          .replace(/[^\w\s\u4e00-\u9fff\u3400-\u4dbf]/g, '') // 只保留中英文數字
-          .substring(0, 40); // 限制40字符
-      } else {
-        cleanOverview = '精彩電影值得一看';
-      }
-      
-      // 清理評分
+    // 如果只有一部電影，使用 buttons 模板
+    if (movies.length === 1) {
+      const movie = movies[0];
+      const cleanTitle = cleanText(movie.title || '未知電影', 20);
+      const cleanOverview = cleanText(movie.overview || '精彩電影值得一看', 50);
       const rating = movie.vote_average ? parseFloat(movie.vote_average).toFixed(1) : '0.0';
-      
-      // 清理上映日期
       const releaseDate = movie.release_date || 'TBA';
-
-      // 構建安全的描述文字
-      const safeText = `評分 ${rating}/10\n上映 ${releaseDate}\n${cleanOverview}`;
-      
-      console.log('處理電影:', cleanTitle, '描述長度:', safeText.length);
-
       const imageUrl = movie.poster_path 
         ? 'https://image.tmdb.org/t/p/w300' + movie.poster_path
         : 'https://images.unsplash.com/photo-1489599504095-7e17c1989ca9?w=300&h=200&fit=crop';
+
+      return {
+        type: 'template',
+        altText: title + '：' + cleanTitle,
+        template: {
+          type: 'buttons',
+          thumbnailImageUrl: imageUrl,
+          title: cleanTitle,
+          text: '評分：' + rating + '/10\n上映：' + releaseDate + '\n' + cleanOverview,
+          actions: [
+            { type: 'message', label: '更多推薦', text: '推薦更多電影' },
+            { type: 'message', label: '返回選單', text: '選單' }
+          ]
+        }
+      };
+    }
+
+    // 多部電影使用 carousel，但要非常小心格式
+    const columns = movies.map((movie, index) => {
+      console.log('處理電影 ' + (index + 1) + ':', movie.title);
+      
+      const cleanTitle = cleanText(movie.title || '電影' + (index + 1), 15);
+      const cleanOverview = cleanText(movie.overview || '精彩電影', 35);
+      const rating = movie.vote_average ? parseFloat(movie.vote_average).toFixed(1) : '0.0';
+      const releaseDate = movie.release_date ? movie.release_date.substring(0, 4) : 'TBA';
+      
+      // 使用安全的預設圖片
+      const imageUrl = movie.poster_path 
+        ? 'https://image.tmdb.org/t/p/w300' + movie.poster_path
+        : 'https://images.unsplash.com/photo-1489599504095-7e17c1989ca9?w=300&h=200&fit=crop';
+
+      const safeText = '評分 ' + rating + '\n年份 ' + releaseDate + '\n' + cleanOverview;
+      
+      console.log('電影', index + 1, '處理完成:', {
+        title: cleanTitle,
+        textLength: safeText.length,
+        imageUrl: imageUrl.substring(0, 50) + '...'
+      });
 
       return {
         thumbnailImageUrl: imageUrl,
         title: cleanTitle,
         text: safeText,
         actions: [
-          { type: 'message', label: '更多推薦', text: '推薦更多電影' },
+          { type: 'message', label: '更多電影', text: '推薦更多電影' },
           { type: 'message', label: '返回選單', text: '選單' }
         ]
       };
     });
 
-    console.log('準備建立電影 Carousel');
-    return {
+    console.log('準備建立電影 Carousel，columns 數量:', columns.length);
+    
+    const carouselMessage = {
       type: 'template',
       altText: title,
       template: {
@@ -473,6 +491,17 @@ async function handleMovieQuery(text) {
         columns: columns
       }
     };
+    
+    // 驗證訊息大小
+    const messageSize = JSON.stringify(carouselMessage).length;
+    console.log('Carousel 訊息大小:', messageSize, 'bytes');
+    
+    if (messageSize > 50000) { // LINE 限制約 50KB
+      console.log('訊息太大，改用簡單回應');
+      return createSimpleMovieList(movies, title);
+    }
+
+    return carouselMessage;
   } catch (error) {
     console.error('電影查詢錯誤:', error.message);
     console.error('錯誤詳情:', error.response?.data || error);
@@ -480,7 +509,43 @@ async function handleMovieQuery(text) {
   }
 }
 
-// 處理新聞查詢 - 修正版本
+// 清理文字函數
+function cleanText(text, maxLength) {
+  if (!text) return '無資料';
+  
+  // 移除或替換有問題的字符
+  let cleaned = text
+    .replace(/[^\w\s\u4e00-\u9fff\u3400-\u4dbf\-\[\]()（）]/g, '') // 只保留安全字符
+    .replace(/\s+/g, ' ') // 合併多個空格
+    .trim();
+  
+  // 限制長度
+  if (cleaned.length > maxLength) {
+    cleaned = cleaned.substring(0, maxLength - 3) + '...';
+  }
+  
+  return cleaned || '資料處理中';
+}
+
+// 創建簡單電影列表（備用方案）
+function createSimpleMovieList(movies, title) {
+  let movieList = title + '：\n\n';
+  
+  movies.forEach((movie, index) => {
+    const cleanTitle = cleanText(movie.title || '未知電影', 20);
+    const rating = movie.vote_average ? parseFloat(movie.vote_average).toFixed(1) : '0.0';
+    const year = movie.release_date ? movie.release_date.substring(0, 4) : 'TBA';
+    
+    movieList += (index + 1) + '. ' + cleanTitle + '\n';
+    movieList += '⭐ ' + rating + '/10  📅 ' + year + '\n\n';
+  });
+  
+  movieList += '輸入「推薦更多電影」查看其他推薦';
+  
+  return movieList;
+}
+
+// 處理新聞查詢 - 完全修復版本
 async function handleNewsQuery(text) {
   try {
     console.log('新聞查詢開始，文字:', text);
@@ -505,7 +570,7 @@ async function handleNewsQuery(text) {
     const params = {
       country: 'tw',
       apiKey: NEWS_API_KEY,
-      pageSize: 5
+      pageSize: 3 // 減少到3則新聞
     };
     
     if (category) {
@@ -526,8 +591,10 @@ async function handleNewsQuery(text) {
       article.description && 
       !article.title.includes('[Removed]') &&
       article.title !== '[Removed]' &&
-      article.description !== '[Removed]'
-    ).slice(0, 5);
+      article.description !== '[Removed]' &&
+      article.url && 
+      article.url.startsWith('http')
+    ).slice(0, 3);
     
     console.log('過濾後新聞數量:', articles.length);
     
@@ -535,22 +602,44 @@ async function handleNewsQuery(text) {
       return '抱歉，目前無法獲取新聞資訊。';
     }
 
-    // 清理和限制文字內容，避免 LINE API 錯誤
-    const columns = articles.map(article => {
-      // 清理標題 - 移除特殊字符，限制長度
-      let cleanTitle = (article.title || '新聞標題')
-        .replace(/[^\w\s\u4e00-\u9fff\u3400-\u4dbf\-\[\]]/g, '') // 保留中英文數字和部分標點
-        .substring(0, 35); // 限制35字符
-      
-      // 清理描述 - 移除特殊字符，限制長度
-      let cleanDescription = (article.description || '新聞內容')
-        .replace(/[^\w\s\u4e00-\u9fff\u3400-\u4dbf\-\[\]]/g, '') // 保留中英文數字和部分標點
-        .substring(0, 50); // 限制50字符
-      
-      console.log('處理新聞:', cleanTitle, '描述長度:', cleanDescription.length);
+    // 如果只有一則新聞，使用 buttons 模板
+    if (articles.length === 1) {
+      const article = articles[0];
+      const cleanTitle = cleanText(article.title, 25);
+      const cleanDescription = cleanText(article.description, 60);
+      const imageUrl = article.urlToImage || 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=300&h=200&fit=crop';
 
+      return {
+        type: 'template',
+        altText: title + '：' + cleanTitle,
+        template: {
+          type: 'buttons',
+          thumbnailImageUrl: imageUrl,
+          title: cleanTitle,
+          text: cleanDescription,
+          actions: [
+            { type: 'uri', label: '閱讀全文', uri: article.url },
+            { type: 'message', label: '更多新聞', text: '今日新聞頭條' },
+            { type: 'message', label: '返回選單', text: '選單' }
+          ]
+        }
+      };
+    }
+
+    // 多則新聞使用 carousel
+    const columns = articles.map((article, index) => {
+      console.log('處理新聞 ' + (index + 1) + ':', article.title?.substring(0, 20) + '...');
+      
+      const cleanTitle = cleanText(article.title, 20);
+      const cleanDescription = cleanText(article.description, 45);
       const imageUrl = article.urlToImage || 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=300&h=200&fit=crop';
       
+      console.log('新聞', index + 1, '處理完成:', {
+        title: cleanTitle,
+        descLength: cleanDescription.length,
+        hasImage: !!article.urlToImage
+      });
+
       return {
         thumbnailImageUrl: imageUrl,
         title: cleanTitle,
@@ -562,8 +651,9 @@ async function handleNewsQuery(text) {
       };
     });
 
-    console.log('準備建立新聞 Carousel');
-    return {
+    console.log('準備建立新聞 Carousel，columns 數量:', columns.length);
+    
+    const carouselMessage = {
       type: 'template',
       altText: title,
       template: {
@@ -571,11 +661,42 @@ async function handleNewsQuery(text) {
         columns: columns
       }
     };
+    
+    // 驗證訊息大小
+    const messageSize = JSON.stringify(carouselMessage).length;
+    console.log('Carousel 訊息大小:', messageSize, 'bytes');
+    
+    if (messageSize > 50000) {
+      console.log('訊息太大，改用簡單回應');
+      return createSimpleNewsList(articles, title);
+    }
+
+    return carouselMessage;
   } catch (error) {
     console.error('新聞查詢錯誤:', error.message);
     console.error('錯誤詳情:', error.response?.data || error);
     return '抱歉，無法獲取新聞資訊，請稍後再試。';
   }
+}
+
+// 創建簡單新聞列表（備用方案）
+function createSimpleNewsList(articles, title) {
+  let newsList = title + '：\n\n';
+  
+  articles.forEach((article, index) => {
+    const cleanTitle = cleanText(article.title || '新聞標題', 30);
+    
+    newsList += (index + 1) + '. ' + cleanTitle + '\n';
+    if (article.description) {
+      const cleanDesc = cleanText(article.description, 50);
+      newsList += '📄 ' + cleanDesc + '\n';
+    }
+    newsList += '🔗 ' + article.url + '\n\n';
+  });
+  
+  newsList += '輸入「今日新聞頭條」查看更多新聞';
+  
+  return newsList;
 }
 
 // 處理一般對話 - 修正版本
@@ -748,14 +869,23 @@ async function handleTestQuery() {
   // 測試 Gemini API
   try {
     if (GEMINI_API_KEY && GEMINI_API_KEY !== 'your-api-key') {
-      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-      await model.generateContent('測試');
+      const model = genAI.getGenerativeModel({ 
+        model: "gemini-1.5-flash",
+        generationConfig: {
+          maxOutputTokens: 50,
+        }
+      });
+      const result = await model.generateContent('測試回應：你好');
+      const response = await result.response;
+      const text = response.text();
+      console.log('Gemini 測試回應:', text);
       testResults += '🤖 AI 對話：✅ 正常\n';
     } else {
       testResults += '🤖 AI 對話：⚠️ 未配置\n';
     }
   } catch (error) {
-    testResults += '🤖 AI 對話：❌ 異常\n';
+    console.error('Gemini 測試錯誤:', error);
+    testResults += '🤖 AI 對話：❌ 異常 (' + error.message + ')\n';
   }
   
   testResults += '\n💡 如果有 API 異常，請檢查網路連線或 API 金鑰設定。';
