@@ -6,17 +6,19 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+console.log('正在啟動 LINE Bot...');
+
 // 配置資訊
 const config = {
-  channelAccessToken: 'G5/Jatw/Mm7gpHjRnVG89Mxp+6QWXINk4mGkga8o3g9TRa96NXiOed5ylkNZjuUtGHXFKCV46xX1t73PZkYdjlqIFoJHe0XiPUP4EyRy/jwJ6sqRtXivrQNA0WH+DK9pLUKg/ybSZ1mvGywuK8upBAdB04t89/1O/w1cDnyilFU=',
-  channelSecret: 'ff89f01585f2b68301b8f8911174cd87'
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || 'G5/Jatw/Mm7gpHjRnVG89Mxp+6QWXINk4mGkga8o3g9TRa96NXiOed5ylkNZjuUtGHXFKCV46xX1t73PZkYdjlqIFoJHe0XiPUP4EyRy/jwJ6sqRtXivrQNA0WH+DK9pLUKg/ybSZ1mvGywuK8upBAdB04t89/1O/w1cDnyilFU=',
+  channelSecret: process.env.LINE_CHANNEL_SECRET || 'ff89f01585f2b68301b8f8911174cd87'
 };
 
 // API Keys
-const GEMINI_API_KEY = 'AIzaSyBWCitsjkm7DPe_aREubKIZjqmgXafVKNE';
-const NEWS_API_KEY = '5807e3e70bd2424584afdfc6e932108b';
-const TMDB_API_KEY = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIyMzI4YmU1YzdhNDA1OTczZDdjMjA0NDlkYmVkOTg4OCIsIm5iZiI6MS43NDYwNzg5MDI5MTgwMDAyZSs5LCJzdWIiOiI2ODEzMGNiNjgyODI5Y2NhNzExZmJkNDkiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.FQlIdfWlf4E0Tw9sYRF7txbWymAby77KnHjTVNFSpdM';
-const WEATHER_API_KEY = 'CWA-C80C73F3-7042-4D8D-A88A-D39DD2CFF841';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyBWCitsjkm7DPe_aREubKIZjqmgXafVKNE';
+const NEWS_API_KEY = process.env.NEWS_API_KEY || '5807e3e70bd2424584afdfc6e932108b';
+const TMDB_API_KEY = process.env.TMDB_API_KEY || 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIyMzI4YmU1YzdhNDA1OTczZDdjMjA0NDlkYmVkOTg4OCIsIm5iZiI6MS43NDYwNzg5MDI5MTgwMDAyZSs5LCJzdWIiOiI2ODEzMGNiNjgyODI5Y2NhNzExZmJkNDkiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.FQlIdfWlf4E0Tw9sYRF7txbWymAby77KnHjTVNFSpdM';
+const WEATHER_API_KEY = process.env.WEATHER_API_KEY || 'CWA-C80C73F3-7042-4D8D-A88A-D39DD2CFF841';
 
 // 初始化 LINE 客戶端
 const client = new line.Client(config);
@@ -276,8 +278,19 @@ async function handleGeneralChat(message, history, source) {
 }
 
 // 啟動伺服器
-app.listen(PORT, () => {
-  console.log(`伺服器運行在端口 ${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ LINE Bot 伺服器成功啟動！`);
+  console.log(`🌐 伺服器運行在端口 ${PORT}`);
+  console.log(`📍 Webhook URL: /webhook`);
+});
+
+// 處理未捕獲的異常
+process.on('uncaughtException', (error) => {
+  console.error('未捕獲的異常:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('未處理的 Promise 拒絕:', reason);
 });
 
 module.exports = app;
