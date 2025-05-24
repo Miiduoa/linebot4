@@ -25,6 +25,11 @@ services:
         value: your-google-search-api-key  # 需要你申請 Google Custom Search API Key
       - key: SEARCH_ENGINE_ID
         value: 526082b509a1942a7  # 你的 Google Custom Search Engine ID
+      # 備用 AI API 配置
+      - key: BACKUP_AI_KEY
+        value: sk-U8sgp8YW0jX3flzFCM1azu85GS6WbHlMyqU7L0ZDer9n8aUM
+      - key: BACKUP_AI_URL
+        value: https://api.chatanywhere.org/v1
       # 超級功能配置
       - key: ADMIN_USER_ID
         value: demo326  # 你的 LINE ID，用於接收決策通知
