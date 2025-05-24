@@ -1,23 +1,18 @@
 {
-  "name": "enhanced-line-chatbot",
-  "version": "2.0.0",
-  "description": "增強版 LINE 聊天機器人 - 具備智能學習、時間感知、網路搜尋與提醒功能",
+  "name": "super-enhanced-line-chatbot",
+  "version": "3.0.0",
+  "description": "超級增強版 LINE 聊天機器人 - 具備記憶、矛盾檢測、沉默提醒、收回追蹤與決策輔助功能",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "build": "echo 'No build step required'",
-    "test": "node -e \"console.log('Running basic health check...'); require('./app.js');\""
+    "build": "echo 'No build step required'"
   },
   "dependencies": {
     "@line/bot-sdk": "^8.0.0",
     "@google/generative-ai": "^0.5.0",
     "express": "^4.18.2",
-    "axios": "^1.6.0",
-    "node-cron": "^3.0.3",
-    "moment-timezone": "^0.5.43",
-    "natural": "^6.5.0",
-    "lodash": "^4.17.21"
+    "axios": "^1.6.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.0"
@@ -29,22 +24,16 @@
     "line",
     "chatbot",
     "ai",
-    "machine-learning",
-    "intelligent",
-    "reminder",
-    "search",
+    "super-intelligent",
+    "memory-system",
+    "contradiction-detection",
+    "silent-member-reminder",
+    "unsend-message-tracker",
+    "decision-assistant",
     "nodejs",
     "express",
     "gemini"
   ],
-  "author": "Enhanced Chatbot Developer",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/your-username/enhanced-line-chatbot.git"
-  },
-  "bugs": {
-    "url": "https://github.com/your-username/enhanced-line-chatbot/issues"
-  },
-  "homepage": "https://github.com/your-username/enhanced-line-chatbot#readme"
+  "author": "Super Chatbot Developer",
+  "license": "MIT"
 }
