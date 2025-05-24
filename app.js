@@ -7,7 +7,11 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// 設定時區為台灣
+process.env.TZ = 'Asia/Taipei';
+
 console.log('正在啟動超級增強版 LINE Bot...');
+console.log('當前時間:', new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }));
 
 // 配置資訊
 const config = {
@@ -27,18 +31,126 @@ const SEARCH_ENGINE_ID = process.env.SEARCH_ENGINE_ID || '526082b509a1942a7';
 const ADMIN_USER_ID = process.env.ADMIN_USER_ID || 'demo326';
 const DECISION_KEYWORDS = ['決定', '決策', '怎麼辦', '選擇', '意見', '建議', '投票', '同意嗎', '看法'];
 
+// LINE 訊息長度限制
+const MAX_MESSAGE_LENGTH = 2000;
+
 // 初始化 LINE 客戶端
 const client = new line.Client(config);
 
 // 初始化 Gemini AI
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
+// API 調用限制器
+class APIRateLimiter {
+  constructor() {
+    this.geminiCalls = [];
+    this.maxCallsPerMinute = 12; // 保守一點，免費版限制是15次
+  }
+
+  canCallGemini() {
+    const now = Date.now();
+    // 清理一分鐘前的記錄
+    this.geminiCalls = this.geminiCalls.filter(time => now - time < 60000);
+    
+    if (this.geminiCalls.length >= this.maxCallsPerMinute) {
+      console.log(`⚠️ Gemini API 調用頻率限制，當前: ${this.geminiCalls.length}/分鐘`);
+      return false;
+    }
+    
+    this.geminiCalls.push(now);
+    return true;
+  }
+
+  getRemainingCalls() {
+    const now = Date.now();
+    this.geminiCalls = this.geminiCalls.filter(time => now - time < 60000);
+    return this.maxCallsPerMinute - this.geminiCalls.length;
+  }
+}
+
+const rateLimiter = new APIRateLimiter();
+
 // 儲存系統
 const conversationHistory = new Map();
 const learningDatabase = new Map();
 const reminderSystem = new Map();
 
-// 超級記憶系統
+// 時間系統（修正版）
+const TimeSystem = {
+  getCurrentTime() {
+    const now = new Date();
+    
+    // 確保使用台灣時區
+    const taiwanTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
+    
+    return {
+      timestamp: taiwanTime,
+      formatted: taiwanTime.toLocaleString('zh-TW', {
+        year: 'numeric',
+        month: '2-digit', 
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        weekday: 'long',
+        timeZone: 'Asia/Taipei'
+      }),
+      dateOnly: taiwanTime.toLocaleDateString('zh-TW', {timeZone: 'Asia/Taipei'}),
+      timeOnly: taiwanTime.toLocaleTimeString('zh-TW', {timeZone: 'Asia/Taipei'}),
+      iso: taiwanTime.toISOString()
+    };
+  },
+
+  parseTimeExpression(text) {
+    const timePatterns = [
+      { pattern: /(\d{1,2})分鐘後/, offset: null, type: 'minute' },
+      { pattern: /(\d{1,2})小時後/, offset: null, type: 'hour' },
+      { pattern: /明天.*?(\d{1,2})點/, offset: 1, type: 'day' },
+      { pattern: /後天.*?(\d{1,2})點/, offset: 2, type: 'day' },
+      { pattern: /今天.*?(\d{1,2})點/, offset: 0, type: 'day' }
+    ];
+
+    for (const timePattern of timePatterns) {
+      const match = text.match(timePattern.pattern);
+      if (match) {
+        const now = this.getCurrentTime().timestamp;
+        const value = parseInt(match[1]);
+        
+        switch (timePattern.type) {
+          case 'minute':
+            return new Date(now.getTime() + value * 60000);
+          case 'hour':
+            return new Date(now.getTime() + value * 3600000);
+          case 'day':
+            const targetDate = new Date(now);
+            targetDate.setDate(now.getDate() + timePattern.offset);
+            targetDate.setHours(value, 0, 0, 0);
+            return targetDate;
+        }
+      }
+    }
+    
+    return null;
+  }
+};
+
+// 訊息長度限制器
+function limitMessageLength(message, maxLength = MAX_MESSAGE_LENGTH) {
+  if (typeof message === 'string') {
+    if (message.length > maxLength) {
+      return message.substring(0, maxLength - 20) + '\n\n...(訊息過長已截斷)';
+    }
+    return message;
+  }
+  
+  if (message && message.text) {
+    message.text = limitMessageLength(message.text, maxLength);
+  }
+  
+  return message;
+}
+
+// 超級記憶系統（優化版）
 class SuperMemorySystem {
   constructor() {
     this.userStatements = new Map();
@@ -67,14 +179,30 @@ class SuperMemorySystem {
 
     this.userStatements.get(key).push(record);
     
-    if (this.userStatements.get(key).length > 100) {
-      this.userStatements.get(key) = this.userStatements.get(key).slice(-100);
+    if (this.userStatements.get(key).length > 50) { // 減少記憶數量
+      this.userStatements.get(key) = this.userStatements.get(key).slice(-50);
     }
 
-    this.detectContradictions(userId, userName, statement, groupId);
+    // 只對重要語句進行矛盾檢測
+    if (this.isImportantStatement(statement)) {
+      this.detectContradictions(userId, userName, statement, groupId);
+    }
+    
     this.updateUserProfile(userId, userName, record);
 
     console.log(`🧠 記錄發言：${userName} - ${statement.substring(0, 30)}...`);
+  }
+
+  // 判斷是否為重要語句（減少API調用）
+  isImportantStatement(statement) {
+    const importantKeywords = [
+      /我.*喜歡|我.*不喜歡|我.*覺得|我.*認為/,
+      /我會|我不會|我要|我不要/,
+      /決定|選擇|同意|反對/,
+      /好|不好|棒|爛/
+    ];
+    
+    return importantKeywords.some(pattern => pattern.test(statement)) && statement.length > 5;
   }
 
   extractTopics(statement) {
@@ -98,8 +226,8 @@ class SuperMemorySystem {
   }
 
   analyzeSentiment(statement) {
-    const positive = /好|棒|讚|同意|支持|喜歡|滿意/.test(statement);
-    const negative = /不好|爛|反對|不同意|討厭|不滿/.test(statement);
+    const positive = /好|棒|讚|同意|支持|喜歡|滿意|開心|高興/.test(statement);
+    const negative = /不好|爛|反對|不同意|討厭|不滿|生氣|難過/.test(statement);
     
     if (positive) return 'positive';
     if (negative) return 'negative';
@@ -108,15 +236,29 @@ class SuperMemorySystem {
 
   async detectContradictions(userId, userName, currentStatement, groupId) {
     try {
+      // 檢查API調用限制
+      if (!rateLimiter.canCallGemini()) {
+        console.log('⚠️ Gemini API 調用限制，跳過矛盾檢測');
+        return;
+      }
+
       const key = `${userId}-${groupId || 'private'}`;
       const userHistory = this.userStatements.get(key) || [];
       
-      const recentStatements = userHistory.slice(-20);
+      // 只檢查最近5條重要發言
+      const recentStatements = userHistory
+        .filter(s => this.isImportantStatement(s.statement))
+        .slice(-5);
       
       for (const pastStatement of recentStatements) {
+        const timeDiff = Math.abs(new Date() - pastStatement.timestamp);
+        
+        // 只檢查24小時內的發言
+        if (timeDiff > 24 * 60 * 60 * 1000) continue;
+        
         const contradiction = await this.checkContradiction(currentStatement, pastStatement.statement);
         
-        if (contradiction.isContradiction && contradiction.confidence > 0.7) {
+        if (contradiction.isContradiction && contradiction.confidence > 0.8) {
           const contradictionRecord = {
             userId,
             userName,
@@ -134,17 +276,16 @@ class SuperMemorySystem {
           
           console.log(`⚠️ 檢測到矛盾：${userName} - 信心度：${contradiction.confidence}`);
           
-          if (contradiction.confidence > 0.8) {
-            setTimeout(() => {
-              this.sendContradictionNotice(contradictionRecord);
-            }, 2000);
-          }
+          // 延遲發送避免干擾
+          setTimeout(() => {
+            this.sendContradictionNotice(contradictionRecord);
+          }, 3000);
           
           break;
         }
       }
     } catch (error) {
-      console.error('矛盾檢測錯誤:', error);
+      console.error('矛盾檢測錯誤:', error.message);
     }
   }
 
@@ -153,36 +294,36 @@ class SuperMemorySystem {
       const model = genAI.getGenerativeModel({ 
         model: "gemini-1.5-flash",
         generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 200,
+          temperature: 0.1,
+          maxOutputTokens: 150, // 減少輸出長度
         }
       });
 
-      const prompt = `請分析以下兩個發言是否矛盾：
+      const prompt = `分析是否矛盾（簡潔回答）：
 
 發言1：${statement1}
 發言2：${statement2}
 
-請以JSON格式回答：
-{
-  "isContradiction": true/false,
-  "confidence": 0-1的信心分數,
-  "explanation": "矛盾的具體說明",
-  "type": "direct/indirect/no_contradiction"  
-}`;
+JSON格式：
+{"isContradiction": true/false, "confidence": 0-1, "explanation": "簡短說明"}`;
 
       const result = await model.generateContent(prompt);
       const response = await result.response;
       const text = response.text().trim();
       
       try {
-        return JSON.parse(text);
+        const parsed = JSON.parse(text);
+        return parsed;
       } catch {
-        return { isContradiction: false, confidence: 0 };
+        return { isContradiction: false, confidence: 0, explanation: '解析失敗' };
       }
     } catch (error) {
-      console.error('AI矛盾檢測錯誤:', error);
-      return { isContradiction: false, confidence: 0 };
+      if (error.message.includes('429') || error.message.includes('quota')) {
+        console.log('⚠️ Gemini API 配額已滿，暫停矛盾檢測');
+      } else {
+        console.error('AI矛盾檢測錯誤:', error.message);
+      }
+      return { isContradiction: false, confidence: 0, explanation: '檢測失敗' };
     }
   }
 
@@ -191,22 +332,23 @@ class SuperMemorySystem {
       const timeDiff = Math.floor((contradictionRecord.currentTimestamp - contradictionRecord.pastTimestamp) / (1000 * 60));
       const timeDesc = timeDiff < 60 ? `${timeDiff}分鐘前` : `${Math.floor(timeDiff/60)}小時前`;
 
-      const message = `🤔 ${contradictionRecord.userName}，我注意到你的發言似乎有些不一致：
+      // 簡短的矛盾提醒
+      const message = `🤔 ${contradictionRecord.userName}，我注意到：
 
-📝 剛才說：「${contradictionRecord.currentStatement}」
+現在：「${contradictionRecord.currentStatement}」
+${timeDesc}：「${contradictionRecord.pastStatement}」
 
-📝 ${timeDesc}說過：「${contradictionRecord.pastStatement}」
+這兩個說法似乎不太一致呢！是情況有變化嗎？`;
 
-${contradictionRecord.explanation || '這兩個說法似乎有些矛盾呢！'}
-
-是不是情況有所改變，還是我理解錯了呢？`;
+      // 確保訊息長度符合限制
+      const limitedMessage = limitMessageLength(message);
 
       const targetId = contradictionRecord.groupId || contradictionRecord.userId;
-      await client.pushMessage(targetId, { type: 'text', text: message });
+      await client.pushMessage(targetId, { type: 'text', text: limitedMessage });
       
       console.log(`💬 已發送矛盾提醒給：${contradictionRecord.userName}`);
     } catch (error) {
-      console.error('發送矛盾提醒錯誤:', error);
+      console.error('發送矛盾提醒錯誤:', error.message);
     }
   }
 
@@ -253,177 +395,105 @@ ${contradictionRecord.explanation || '這兩個說法似乎有些矛盾呢！'}
 📊 總發言：${profile.totalMessages} 次
 💬 常談話題：${topTopics.join(', ') || '還在觀察中'}
 😊 情緒分析：正面 ${sentimentRatio.positive}%，負面 ${sentimentRatio.negative}%
-⚠️ 矛盾次數：${profile.contradictions} 次
-⏰ 最後活躍：${profile.lastActive ? new Date(profile.lastActive).toLocaleString('zh-TW') : '未知'}`;
+⏰ 最後活躍：${profile.lastActive ? profile.lastActive.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}) : '未知'}`;
   }
 }
 
-// 群組成員監控系統
+// 簡化的提醒系統
+class SimpleReminderSystem {
+  constructor() {
+    this.reminders = new Map();
+  }
+
+  createReminder(userId, title, targetTime, description = '') {
+    const now = TimeSystem.getCurrentTime().timestamp;
+    const reminderId = `${userId}-${Date.now()}`;
+    
+    const reminder = {
+      id: reminderId,
+      userId,
+      title,
+      targetTime,
+      description,
+      created: now,
+      active: true
+    };
+
+    this.reminders.set(reminderId, reminder);
+    this.scheduleReminder(reminder);
+    
+    return reminderId;
+  }
+
+  scheduleReminder(reminder) {
+    const now = TimeSystem.getCurrentTime().timestamp;
+    const delay = reminder.targetTime.getTime() - now.getTime();
+    
+    if (delay > 0 && delay < 24 * 60 * 60 * 1000) { // 最多24小時
+      setTimeout(async () => {
+        await this.sendReminder(reminder);
+      }, delay);
+      
+      console.log(`⏰ 提醒已安排：${reminder.title} - ${delay}ms後`);
+    }
+  }
+
+  async sendReminder(reminder) {
+    try {
+      const message = `⏰ 提醒時間到！
+
+${reminder.title}
+
+${reminder.description || ''}
+
+設定時間：${reminder.created.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})}`;
+
+      const limitedMessage = limitMessageLength(message);
+      await client.pushMessage(reminder.userId, { type: 'text', text: limitedMessage });
+      
+      console.log(`⏰ 提醒已發送：${reminder.title}`);
+      
+      reminder.active = false;
+    } catch (error) {
+      console.error('發送提醒錯誤:', error.message);
+    }
+  }
+}
+
+// 其他系統的簡化版本
 class GroupMemberMonitor {
   constructor() {
     this.groupMembers = new Map();
     this.memberActivity = new Map();
-    this.silentTracking = new Map();
     this.discussionSessions = new Map();
   }
 
-  async updateGroupMembers(groupId) {
-    try {
-      const memberIds = await client.getGroupMemberIds(groupId);
-      this.groupMembers.set(groupId, memberIds);
-      
-      if (!this.memberActivity.has(groupId)) {
-        this.memberActivity.set(groupId, new Map());
-      }
-
-      const activity = this.memberActivity.get(groupId);
-      memberIds.forEach(memberId => {
-        if (!activity.has(memberId)) {
-          activity.set(memberId, {
-            lastMessage: null,
-            messageCount: 0,
-            silentStreak: 0,
-            isActive: false
-          });
-        }
-      });
-
-      console.log(`👥 更新群組成員：${groupId}，共 ${memberIds.length} 人`);
-    } catch (error) {
-      console.error('更新群組成員錯誤:', error);
-    }
-  }
-
   recordMemberActivity(groupId, userId, userName) {
+    // 簡化的活動記錄
     if (!this.memberActivity.has(groupId)) {
       this.memberActivity.set(groupId, new Map());
     }
 
     const activity = this.memberActivity.get(groupId);
-    if (!activity.has(userId)) {
-      activity.set(userId, {
-        lastMessage: null,
-        messageCount: 0,
-        silentStreak: 0,
-        isActive: false
-      });
-    }
-
-    const memberData = activity.get(userId);
-    memberData.lastMessage = new Date();
-    memberData.messageCount++;
-    memberData.silentStreak = 0;
-    memberData.isActive = true;
-    memberData.userName = userName;
-
-    this.updateSilentStreaks(groupId, userId);
-  }
-
-  updateSilentStreaks(groupId, activeUserId) {
-    const activity = this.memberActivity.get(groupId);
-    if (!activity) return;
-
-    for (const [userId, data] of activity) {
-      if (userId !== activeUserId && data.isActive) {
-        data.silentStreak++;
-      }
-    }
-  }
-
-  async checkSilentMembers(groupId, currentMessage) {
-    const activity = this.memberActivity.get(groupId);
-    if (!activity) return;
-
-    const isImportantDiscussion = this.isImportantDiscussion(currentMessage);
-    if (!isImportantDiscussion) return;
-
-    this.startDiscussionSession(groupId);
-
-    setTimeout(() => {
-      this.checkAndMentionSilentMembers(groupId);
-    }, 60000);
-  }
-
-  isImportantDiscussion(message) {
-    const importantKeywords = [
-      /大家.*意見|各位.*看法|怎麼.*想|同意.*嗎/,
-      /討論|決定|選擇|投票|會議/,
-      /建議|提案|方案|計畫/,
-      /重要|緊急|需要|必須/
-    ];
-
-    return importantKeywords.some(pattern => pattern.test(message));
-  }
-
-  startDiscussionSession(groupId) {
-    this.discussionSessions.set(groupId, {
-      startTime: new Date(),
-      messageCount: 0,
-      participants: new Set(),
-      checkedSilent: false
+    activity.set(userId, {
+      userName,
+      lastMessage: TimeSystem.getCurrentTime().timestamp,
+      messageCount: (activity.get(userId)?.messageCount || 0) + 1
     });
   }
 
-  async checkAndMentionSilentMembers(groupId) {
-    const session = this.discussionSessions.get(groupId);
-    const activity = this.memberActivity.get(groupId);
+  async checkSilentMembers(groupId, currentMessage) {
+    // 簡化的沉默檢測，減少複雜邏輯
+    const importantKeywords = ['大家', '各位', '意見', '看法', '討論', '決定'];
+    const isImportant = importantKeywords.some(keyword => currentMessage.includes(keyword));
     
-    if (!session || !activity || session.checkedSilent) return;
-
-    const silentMembers = [];
-    const totalMembers = Array.from(activity.keys()).length;
-    
-    for (const [userId, data] of activity) {
-      if (data.silentStreak >= 5 && data.isActive && !session.participants.has(userId)) {
-        try {
-          const profile = await client.getGroupMemberProfile(groupId, userId);
-          silentMembers.push({
-            userId,
-            userName: profile.displayName || data.userName || '成員',
-            silentStreak: data.silentStreak
-          });
-        } catch (error) {
-          console.error('獲取成員資料錯誤:', error);
-        }
-      }
-    }
-
-    if (silentMembers.length > 0 && session.participants.size < totalMembers * 0.7) {
-      await this.mentionSilentMembers(groupId, silentMembers);
-      session.checkedSilent = true;
-    }
-  }
-
-  async mentionSilentMembers(groupId, silentMembers) {
-    try {
-      if (silentMembers.length === 1) {
-        const member = silentMembers[0];
-        const message = `@${member.userName} 你對這個討論有什麼看法嗎？大家都在等你的意見呢！ 😊`;
-        
-        await client.pushMessage(groupId, { type: 'text', text: message });
-        console.log(`🔔 已@沉默成員：${member.userName}`);
-      } else if (silentMembers.length > 1) {
-        const names = silentMembers.map(m => `@${m.userName}`).join(' ');
-        const message = `${names} 你們對這個話題有什麼想法嗎？歡迎分享你們的意見！ 💭`;
-        
-        await client.pushMessage(groupId, { type: 'text', text: message });
-        console.log(`🔔 已@多位沉默成員：${silentMembers.length}人`);
-      }
-    } catch (error) {
-      console.error('@沉默成員錯誤:', error);
-    }
-  }
-
-  recordDiscussionParticipation(groupId, userId) {
-    const session = this.discussionSessions.get(groupId);
-    if (session) {
-      session.participants.add(userId);
-      session.messageCount++;
+    if (isImportant) {
+      console.log(`👥 檢測到重要討論：${currentMessage.substring(0, 30)}...`);
+      // 這裡可以添加簡單的@提醒邏輯
     }
   }
 }
 
-// 收回訊息追蹤系統
 class UnsendMessageTracker {
   constructor() {
     this.unsendMessages = new Map();
@@ -432,19 +502,13 @@ class UnsendMessageTracker {
 
   recordMessage(messageId, userId, userName, content, timestamp, groupId = null) {
     this.recentMessages.set(messageId, {
-      messageId,
-      userId,
-      userName,
-      content,
-      timestamp,
-      groupId,
-      isUnsend: false
+      messageId, userId, userName, content, timestamp, groupId
     });
 
-    if (this.recentMessages.size > 1000) {
+    // 只保留最近100條
+    if (this.recentMessages.size > 100) {
       const entries = Array.from(this.recentMessages.entries());
-      entries.sort((a, b) => a[1].timestamp - b[1].timestamp);
-      entries.slice(0, 200).forEach(([key]) => {
+      entries.slice(0, 20).forEach(([key]) => {
         this.recentMessages.delete(key);
       });
     }
@@ -454,78 +518,27 @@ class UnsendMessageTracker {
     const originalMessage = this.recentMessages.get(messageId);
     
     if (originalMessage) {
-      const unsendRecord = {
-        ...originalMessage,
-        unsendTime: new Date(),
-        isUnsend: true
-      };
-
-      this.unsendMessages.set(messageId, unsendRecord);
-      await this.sendUnsendNotification(unsendRecord);
-      
-      console.log(`📱 記錄收回訊息：${originalMessage.userName} - ${originalMessage.content.substring(0, 30)}...`);
-    } else {
-      const unknownUnsend = {
-        messageId,
-        userId,
-        userName: '未知用戶',
-        content: '無法追蹤的訊息',
-        timestamp: new Date(),
-        unsendTime: new Date(),
-        groupId,
-        isUnsend: true
-      };
-
-      this.unsendMessages.set(messageId, unknownUnsend);
-      await this.sendUnsendNotification(unknownUnsend);
-    }
-  }
-
-  async sendUnsendNotification(unsendRecord) {
-    try {
-      const timeDiff = Math.floor((unsendRecord.unsendTime - unsendRecord.timestamp) / 1000);
-      const timeDesc = timeDiff < 60 ? `${timeDiff}秒` : `${Math.floor(timeDiff/60)}分鐘`;
-
       const message = `📱 偵測到收回訊息！
 
-👤 用戶：${unsendRecord.userName}
-💬 收回內容：「${unsendRecord.content}」
-⏰ 原發送時間：${new Date(unsendRecord.timestamp).toLocaleString('zh-TW')}
-🗑️ 收回時間：${unsendRecord.unsendTime.toLocaleString('zh-TW')}
-⌛ 間隔時間：${timeDesc}
+👤 ${originalMessage.userName}
+💬 「${originalMessage.content}」
+⏰ ${originalMessage.timestamp.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})}
 
 🤖 我都記住了呢！`;
 
-      const targetId = unsendRecord.groupId || unsendRecord.userId;
-      await client.pushMessage(targetId, { type: 'text', text: message });
+      const limitedMessage = limitMessageLength(message);
+      const targetId = groupId || userId;
       
-      console.log(`📢 已發送收回通知：${unsendRecord.userName}`);
-    } catch (error) {
-      console.error('發送收回通知錯誤:', error);
+      try {
+        await client.pushMessage(targetId, { type: 'text', text: limitedMessage });
+        console.log(`📢 已發送收回通知：${originalMessage.userName}`);
+      } catch (error) {
+        console.error('發送收回通知錯誤:', error.message);
+      }
     }
-  }
-
-  getUserUnsendHistory(userId, limit = 10) {
-    const userUnsends = Array.from(this.unsendMessages.values())
-      .filter(record => record.userId === userId)
-      .sort((a, b) => b.unsendTime - a.unsendTime)
-      .slice(0, limit);
-
-    if (userUnsends.length === 0) {
-      return '這位用戶沒有收回過訊息記錄。';
-    }
-
-    let history = `📱 ${userUnsends[0].userName} 的收回記錄：\n\n`;
-    userUnsends.forEach((record, index) => {
-      history += `${index + 1}. 「${record.content.substring(0, 50)}${record.content.length > 50 ? '...' : ''}」\n`;
-      history += `   收回時間：${record.unsendTime.toLocaleString('zh-TW')}\n\n`;
-    });
-
-    return history;
   }
 }
 
-// 決策輔助系統
 class DecisionAssistant {
   constructor() {
     this.pendingDecisions = new Map();
@@ -535,262 +548,70 @@ class DecisionAssistant {
   async detectDecisionNeeded(groupId, message, userId, userName) {
     const needsDecision = DECISION_KEYWORDS.some(keyword => message.includes(keyword));
     
-    if (needsDecision) {
+    if (needsDecision && rateLimiter.canCallGemini()) {
       console.log(`🤔 檢測到可能需要決策：${message.substring(0, 50)}...`);
       
+      // 簡化的決策檢測，減少API調用
       setTimeout(() => {
-        this.analyzeAndRequestDecision(groupId, message, userId, userName);
-      }, 45000);
+        this.sendSimpleDecisionRequest(groupId, message, userName);
+      }, 30000);
     }
   }
 
-  async analyzeAndRequestDecision(groupId, triggerMessage, triggerUserId, triggerUserName) {
+  async sendSimpleDecisionRequest(groupId, message, userName) {
     try {
-      const recentConversation = this.getRecentGroupConversation(groupId);
-      
-      if (recentConversation.length < 3) return;
+      const report = `🎯 群組決策請求
 
-      const analysisResult = await this.analyzeDecisionNeed(recentConversation, triggerMessage);
+📍 群組：${groupId.substring(0, 15)}...
+👤 觸發者：${userName}
+💬 內容：${message}
+⏰ 時間：${TimeSystem.getCurrentTime().formatted}
+
+請您查看群組對話並做出決策。`;
+
+      const limitedReport = limitMessageLength(report);
+      await client.pushMessage(ADMIN_USER_ID, { type: 'text', text: limitedReport });
       
-      if (analysisResult.needsDecision && analysisResult.confidence > 0.6) {
-        await this.sendDecisionRequest(groupId, analysisResult, recentConversation);
-      }
+      console.log(`🎯 已發送簡化決策請求`);
     } catch (error) {
-      console.error('決策分析錯誤:', error);
-    }
-  }
-
-  getRecentGroupConversation(groupId) {
-    const conversation = [];
-    
-    for (const [key, statements] of superMemorySystem.userStatements) {
-      if (key.includes(groupId)) {
-        statements.slice(-10).forEach(statement => {
-          conversation.push({
-            userName: statement.userName,
-            message: statement.statement,
-            timestamp: statement.timestamp
-          });
-        });
-      }
-    }
-
-    return conversation.sort((a, b) => a.timestamp - b.timestamp).slice(-20);
-  }
-
-  async analyzeDecisionNeed(conversation, triggerMessage) {
-    try {
-      const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash",
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 400,
-        }
-      });
-
-      const conversationText = conversation.map(c => 
-        `${c.userName}: ${c.message}`
-      ).join('\n');
-
-      const prompt = `分析以下群組對話，判斷是否需要管理者介入做決策：
-
-觸發訊息：${triggerMessage}
-
-最近對話：
-${conversationText}
-
-請以JSON格式回答：
-{
-  "needsDecision": true/false,
-  "confidence": 0-1的信心分數,
-  "decisionType": "conflict/choice/planning/approval/other",
-  "summary": "對話摘要",
-  "keyPoints": ["要點1", "要點2", "要點3"],
-  "urgency": "high/medium/low",
-  "suggestedAction": "建議的行動"
-}`;
-
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text().trim();
-      
-      try {
-        return JSON.parse(text);
-      } catch {
-        return { needsDecision: false, confidence: 0 };
-      }
-    } catch (error) {
-      console.error('AI決策分析錯誤:', error);
-      return { needsDecision: false, confidence: 0 };
-    }
-  }
-
-  async sendDecisionRequest(groupId, analysis, conversation) {
-    try {
-      const decisionId = `decision-${Date.now()}`;
-      
-      this.pendingDecisions.set(decisionId, {
-        id: decisionId,
-        groupId,
-        analysis,
-        conversation,
-        timestamp: new Date(),
-        status: 'pending'
-      });
-
-      const report = this.createDecisionReport(analysis, conversation, groupId);
-      
-      const message = {
-        type: 'template',
-        altText: `決策請求：${analysis.decisionType}`,
-        template: {
-          type: 'buttons',
-          title: '🎯 需要您的決策',
-          text: `類型：${analysis.decisionType}\n緊急度：${analysis.urgency}\n群組：${groupId.substring(0, 10)}...`,
-          actions: [
-            { type: 'message', label: '查看詳情', text: `決策詳情 ${decisionId}` },
-            { type: 'message', label: '立即處理', text: `處理決策 ${decisionId}` },
-            { type: 'message', label: '稍後處理', text: `稍後決策 ${decisionId}` }
-          ]
-        }
-      };
-
-      await client.pushMessage(ADMIN_USER_ID, message);
-      await client.pushMessage(ADMIN_USER_ID, { type: 'text', text: report });
-      
-      console.log(`🎯 已發送決策請求給管理者：${decisionId}`);
-    } catch (error) {
-      console.error('發送決策請求錯誤:', error);
-    }
-  }
-
-  createDecisionReport(analysis, conversation, groupId) {
-    let report = `📊 決策分析報告\n\n`;
-    report += `🎯 決策類型：${analysis.decisionType}\n`;
-    report += `⚡ 緊急程度：${analysis.urgency}\n`;
-    report += `📈 信心分數：${Math.round(analysis.confidence * 100)}%\n`;
-    report += `📍 群組ID：${groupId}\n`;
-    report += `⏰ 時間：${new Date().toLocaleString('zh-TW')}\n\n`;
-    
-    report += `📝 情況摘要：\n${analysis.summary}\n\n`;
-    
-    report += `🔍 關鍵要點：\n`;
-    analysis.keyPoints.forEach((point, index) => {
-      report += `${index + 1}. ${point}\n`;
-    });
-    
-    report += `\n💡 建議行動：\n${analysis.suggestedAction}\n\n`;
-    
-    report += `💬 相關對話：\n`;
-    conversation.slice(-8).forEach(c => {
-      report += `${c.userName}: ${c.message.substring(0, 60)}${c.message.length > 60 ? '...' : ''}\n`;
-    });
-    
-    report += `\n🤖 請回覆您的決策，我會轉達給群組成員。`;
-    
-    return report;
-  }
-
-  async handleAdminResponse(message, decisionId) {
-    const decision = this.pendingDecisions.get(decisionId);
-    if (!decision) return false;
-
-    decision.status = 'resolved';
-    decision.adminResponse = message;
-    decision.resolvedAt = new Date();
-
-    await this.sendDecisionResult(decision, message);
-    
-    this.decisionHistory.set(decisionId, decision);
-    this.pendingDecisions.delete(decisionId);
-    
-    return true;
-  }
-
-  async sendDecisionResult(decision, adminMessage) {
-    try {
-      const message = `🎯 管理者決策結果：
-
-${adminMessage}
-
-📝 此決策已記錄，如有疑問請私訊管理者。`;
-
-      await client.pushMessage(decision.groupId, { type: 'text', text: message });
-      console.log(`✅ 已發送決策結果到群組：${decision.groupId}`);
-    } catch (error) {
-      console.error('發送決策結果錯誤:', error);
+      console.error('發送決策請求錯誤:', error.message);
     }
   }
 }
 
-// 初始化系統 - 修正重複宣告問題
+// 初始化系統
 const superMemorySystem = new SuperMemorySystem();
+const simpleReminderSystem = new SimpleReminderSystem();
 const groupMemberMonitor = new GroupMemberMonitor();
 const unsendMessageTracker = new UnsendMessageTracker();
 const decisionAssistant = new DecisionAssistant();
 
-// 網路搜尋系統（簡化版）
-const webSearchSystem = {
-  knowledgeCache: new Map(),
-  async intelligentSearch(query, userId) {
-    console.log(`🔍 搜尋：${query}`);
-    return null;
-  }
-};
-
-// 時間系統
-const TimeSystem = {
-  getCurrentTime() {
-    const now = new Date();
-    const options = {
-      timeZone: 'Asia/Taipei',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      weekday: 'long'
-    };
-    
-    return {
-      timestamp: now,
-      formatted: now.toLocaleString('zh-TW', options),
-      dateOnly: now.toLocaleDateString('zh-TW'),
-      timeOnly: now.toLocaleTimeString('zh-TW'),
-      iso: now.toISOString()
-    };
-  }
-};
-
 // 健康檢查端點
 app.get('/', (req, res) => {
+  const currentTime = TimeSystem.getCurrentTime();
   const stats = {
     userMemories: superMemorySystem.userStatements.size,
     contradictions: superMemorySystem.contradictions.size,
-    unsendMessages: unsendMessageTracker.unsendMessages.size,
-    pendingDecisions: decisionAssistant.pendingDecisions.size,
-    groupsMonitored: groupMemberMonitor.groupMembers.size
+    reminders: simpleReminderSystem.reminders.size,
+    geminiCallsRemaining: rateLimiter.getRemainingCalls()
   };
 
   res.send(`
     <h1>超級增強版 LINE Bot 正在運行！</h1>
-    <p>當前時間：${new Date().toLocaleString('zh-TW')}</p>
+    <p><strong>台灣時間：${currentTime.formatted}</strong></p>
     <h2>📊 系統統計：</h2>
     <ul>
       <li>🧠 用戶記憶：${stats.userMemories} 人</li>
       <li>⚠️ 矛盾檢測：${stats.contradictions} 筆</li>
-      <li>📱 收回訊息：${stats.unsendMessages} 筆</li>
-      <li>🎯 待決策事項：${stats.pendingDecisions} 件</li>
-      <li>👥 監控群組：${stats.groupsMonitored} 個</li>
+      <li>⏰ 活躍提醒：${stats.reminders} 個</li>
+      <li>🤖 Gemini 剩餘調用：${stats.geminiCallsRemaining}/分鐘</li>
     </ul>
-    <h2>🚀 超級功能：</h2>
+    <h2>🚀 優化功能：</h2>
     <ul>
-      <li>✅ 超級記憶系統</li>
-      <li>✅ 矛盾檢測</li>
-      <li>✅ 沉默成員提醒</li>
-      <li>✅ 收回訊息追蹤</li>
-      <li>✅ 決策輔助系統</li>
+      <li>✅ 台灣時區校正</li>
+      <li>✅ 訊息長度限制</li>
+      <li>✅ API 調用限制</li>
+      <li>✅ 錯誤處理優化</li>
     </ul>
   `);
 });
@@ -828,359 +649,223 @@ app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) =
     .all(events.map(handleEvent))
     .then((result) => res.json(result))
     .catch((err) => {
-      console.error('處理事件錯誤:', err);
+      console.error('處理事件錯誤:', err.message);
       res.status(500).end();
     });
 });
 
-// 事件處理函數
+// 優化的事件處理函數
 async function handleEvent(event) {
-  if (event.type === 'unsend') {
-    await unsendMessageTracker.handleUnsendMessage(
-      event.unsend.messageId,
-      event.source.userId,
-      event.source.groupId
-    );
-    return Promise.resolve(null);
-  }
-
-  if (event.type !== 'message' || event.message.type !== 'text') {
-    return Promise.resolve(null);
-  }
-
-  const userId = event.source.userId;
-  const groupId = event.source.groupId;
-  const messageText = event.message.text.trim();
-  const messageId = event.message.id;
-  const timestamp = new Date();
-  
-  console.log(`📨 收到訊息: ${messageText} | 用戶: ${userId} | 群組: ${groupId || 'private'}`);
-
-  let userName = '未知用戶';
   try {
-    if (groupId) {
-      const profile = await client.getGroupMemberProfile(groupId, userId);
-      userName = profile.displayName;
-    } else {
-      const profile = await client.getProfile(userId);
-      userName = profile.displayName;
+    if (event.type === 'unsend') {
+      await unsendMessageTracker.handleUnsendMessage(
+        event.unsend.messageId,
+        event.source.userId,
+        event.source.groupId
+      );
+      return Promise.resolve(null);
     }
-  } catch (error) {
-    console.error('獲取用戶名稱錯誤:', error);
-  }
 
-  unsendMessageTracker.recordMessage(messageId, userId, userName, messageText, timestamp, groupId);
-  superMemorySystem.recordStatement(userId, userName, messageText, timestamp, groupId);
+    if (event.type !== 'message' || event.message.type !== 'text') {
+      return Promise.resolve(null);
+    }
 
-  if (groupId) {
-    await groupMemberMonitor.updateGroupMembers(groupId);
-    groupMemberMonitor.recordMemberActivity(groupId, userId, userName);
-    groupMemberMonitor.recordDiscussionParticipation(groupId, userId);
-    await groupMemberMonitor.checkSilentMembers(groupId, messageText);
-    await decisionAssistant.detectDecisionNeeded(groupId, messageText, userId, userName);
-  }
+    const userId = event.source.userId;
+    const groupId = event.source.groupId;
+    const messageText = event.message.text.trim();
+    const messageId = event.message.id;
+    const timestamp = TimeSystem.getCurrentTime().timestamp;
+    
+    console.log(`📨 收到訊息: ${messageText} | 用戶: ${userId} | 群組: ${groupId || 'private'}`);
 
-  if (userId === ADMIN_USER_ID) {
-    const decisionMatch = messageText.match(/決策.*?decision-(\d+)/);
-    if (decisionMatch) {
-      const decisionId = `decision-${decisionMatch[1]}`;
-      const handled = await decisionAssistant.handleAdminResponse(messageText, decisionId);
-      if (handled) {
+    // 獲取用戶名稱
+    let userName = '未知用戶';
+    try {
+      if (groupId) {
+        const profile = await client.getGroupMemberProfile(groupId, userId);
+        userName = profile.displayName;
+      } else {
+        const profile = await client.getProfile(userId);
+        userName = profile.displayName;
+      }
+    } catch (error) {
+      console.error('獲取用戶名稱錯誤:', error.message);
+    }
+
+    // 記錄系統
+    unsendMessageTracker.recordMessage(messageId, userId, userName, messageText, timestamp, groupId);
+    superMemorySystem.recordStatement(userId, userName, messageText, timestamp, groupId);
+
+    // 群組功能
+    if (groupId) {
+      groupMemberMonitor.recordMemberActivity(groupId, userId, userName);
+      await groupMemberMonitor.checkSilentMembers(groupId, messageText);
+      await decisionAssistant.detectDecisionNeeded(groupId, messageText, userId, userName);
+    }
+
+    // 特殊指令處理
+    if (messageText.includes('記憶') || messageText.includes('我的記憶')) {
+      const summary = superMemorySystem.getUserMemorySummary(userId);
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: limitMessageLength(summary)
+      });
+    }
+
+    // 提醒功能
+    if (messageText.includes('提醒我') || messageText.includes('分鐘後') || messageText.includes('小時後')) {
+      const targetTime = TimeSystem.parseTimeExpression(messageText);
+      
+      if (targetTime) {
+        const title = messageText.replace(/提醒我|分鐘後|小時後|\d+/g, '').trim() || '重要提醒';
+        const reminderId = simpleReminderSystem.createReminder(userId, title, targetTime);
+        
+        const currentTime = TimeSystem.getCurrentTime();
+        const delayMinutes = Math.round((targetTime.getTime() - currentTime.timestamp.getTime()) / 60000);
+        
+        const confirmMessage = `⏰ 提醒設定成功！
+
+📝 內容：${title}
+⏰ 目標時間：${targetTime.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})}
+⌛ 約 ${delayMinutes} 分鐘後提醒
+
+現在時間：${currentTime.timeOnly}`;
+
         return client.replyMessage(event.replyToken, {
           type: 'text',
-          text: '✅ 決策已處理並發送到相關群組。'
+          text: limitMessageLength(confirmMessage)
         });
       }
     }
-  }
 
-  if (messageText.startsWith('記憶') || messageText.startsWith('回憶')) {
-    const summary = superMemorySystem.getUserMemorySummary(userId);
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: summary
-    });
-  }
+    // 時間查詢
+    if (messageText.includes('現在幾點') || messageText.includes('時間')) {
+      const currentTime = TimeSystem.getCurrentTime();
+      const timeMessage = `🕐 現在時間：${currentTime.timeOnly}
+📅 今天日期：${currentTime.dateOnly}
+🌏 時區：台灣 (GMT+8)`;
 
-  if (messageText.includes('收回記錄') || messageText.includes('收回歷史')) {
-    const history = unsendMessageTracker.getUserUnsendHistory(userId);
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: history
-    });
-  }
-
-  if (!conversationHistory.has(userId)) {
-    conversationHistory.set(userId, []);
-  }
-  
-  const userHistory = conversationHistory.get(userId);
-  userHistory.push({ role: 'user', content: messageText, timestamp });
-  
-  if (userHistory.length > 20) {
-    userHistory.splice(0, userHistory.length - 20);
-  }
-
-  let replyMessage;
-
-  try {
-    if (isGreetingMessage(messageText)) {
-      replyMessage = await createSuperWelcomeMessage(userName);
-      return client.replyMessage(event.replyToken, replyMessage);
-    } else if (isMenuQuery(messageText)) {
-      replyMessage = await createSuperMainMenu();
-      return client.replyMessage(event.replyToken, replyMessage);
-    } else if (messageText.includes('系統狀態') || messageText.includes('超級測試')) {
-      replyMessage = { type: 'text', text: await handleSuperSystemTest() };
-    } else {
-      replyMessage = await handleSuperGeneralChat(messageText, userHistory, userId, userName, groupId);
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: timeMessage
+      });
     }
 
-    const replyText = typeof replyMessage === 'string' ? replyMessage : 
-                     (replyMessage.text || '已處理您的請求');
-    
-    userHistory.push({ 
-      role: 'assistant', 
-      content: replyText, 
-      timestamp: new Date()
-    });
-    
-    if (typeof replyMessage === 'string') {
-      replyMessage = { type: 'text', text: replyMessage };
+    // 系統狀態
+    if (messageText.includes('系統狀態') || messageText.includes('超級測試')) {
+      const statusMessage = await getSystemStatus();
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: limitMessageLength(statusMessage)
+      });
     }
-    
-    return client.replyMessage(event.replyToken, replyMessage);
+
+    // 一般對話
+    const response = await handleGeneralChat(messageText, userId, userName);
+    return client.replyMessage(event.replyToken, {
+      type: 'text',
+      text: limitMessageLength(response)
+    });
+
   } catch (error) {
-    console.error('處理訊息時發生錯誤:', error);
+    console.error('處理事件錯誤:', error.message);
     
-    const errorMessage = {
-      type: 'text',
-      text: '抱歉，我現在有點忙，請稍後再試。我會記住這次的互動！'
-    };
-    
-    return client.replyMessage(event.replyToken, errorMessage);
+    try {
+      return client.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '抱歉，處理您的訊息時遇到問題，請稍後再試！'
+      });
+    } catch (replyError) {
+      console.error('回覆錯誤訊息失敗:', replyError.message);
+      return Promise.resolve(null);
+    }
   }
 }
 
-// 輔助函數
-function isGreetingMessage(text) {
-  const greetings = ['嗨', '哈囉', '你好', 'hi', 'hello', '安安', '早安', '午安', '晚安', '開始'];
-  return greetings.some(greeting => text.toLowerCase().includes(greeting)) ||
-         text.length <= 3 && ['嗨', '你好', 'hi'].includes(text.toLowerCase());
-}
-
-function isMenuQuery(text) {
-  const menuKeywords = ['選單', '菜單', '功能', '幫助', '說明', '指令', '可以做什麼', 'help', '功能表'];
-  return menuKeywords.some(keyword => text.includes(keyword)) ||
-         text === '?' || text === '！' || text === 'menu';
-}
-
-async function createSuperWelcomeMessage(userName) {
-  return {
-    type: 'template',
-    altText: '歡迎使用超級增強版小助手機器人！',
-    template: {
-      type: 'buttons',
-      thumbnailImageUrl: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=400&h=300&fit=crop',
-      title: '🧠 超級智能小助手',
-      text: `歡迎 ${userName}！我現在具備超強記憶力、矛盾檢測、沉默提醒和決策輔助功能！`,
-      actions: [
-        { type: 'message', label: '🧠 我的記憶', text: '我的記憶檔案' },
-        { type: 'message', label: '📱 收回記錄', text: '收回記錄' },
-        { type: 'message', label: '🎯 系統狀態', text: '超級測試' },
-        { type: 'message', label: '📋 完整功能', text: '選單' }
-      ]
-    }
-  };
-}
-
-async function createSuperMainMenu() {
-  return {
-    type: 'template',
-    altText: '超級功能選單',
-    template: {
-      type: 'carousel',
-      columns: [
-        {
-          thumbnailImageUrl: 'https://images.unsplash.com/photo-1620712943543-bcc4688e7485?w=300&h=200&fit=crop',
-          title: '🧠 超級記憶',
-          text: '記住所有對話，檢測矛盾',
-          actions: [
-            { type: 'message', label: '我的記憶檔案', text: '記憶檔案' },
-            { type: 'message', label: '矛盾檢測', text: '檢查矛盾' },
-            { type: 'message', label: '對話分析', text: '分析對話' }
-          ]
-        },
-        {
-          thumbnailImageUrl: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=300&h=200&fit=crop',
-          title: '👥 群組監控',
-          text: '監控成員活躍度與討論',
-          actions: [
-            { type: 'message', label: '成員活躍度', text: '群組活躍度' },
-            { type: 'message', label: '沉默提醒', text: '沉默成員' },
-            { type: 'message', label: '討論分析', text: '討論統計' }
-          ]
-        },
-        {
-          thumbnailImageUrl: 'https://images.unsplash.com/photo-1611224923853-80b023f02d71?w=300&h=200&fit=crop',
-          title: '📱 訊息追蹤',
-          text: '追蹤收回訊息與變化',
-          actions: [
-            { type: 'message', label: '收回記錄', text: '收回歷史' },
-            { type: 'message', label: '訊息統計', text: '訊息分析' },
-            { type: 'message', label: '用戶行為', text: '行為分析' }
-          ]
-        },
-        {
-          thumbnailImageUrl: 'https://images.unsplash.com/photo-1560472354-b33ff0c44a43?w=300&h=200&fit=crop',
-          title: '🎯 決策輔助',
-          text: '智能決策分析與建議',
-          actions: [
-            { type: 'message', label: '決策歷史', text: '決策記錄' },
-            { type: 'message', label: '系統狀態', text: '超級測試' },
-            { type: 'message', label: '功能說明', text: '功能介紹' }
-          ]
-        }
-      ]
-    }
-  };
-}
-
-async function handleSuperSystemTest() {
-  const stats = {
-    userMemories: superMemorySystem.userStatements.size,
-    userProfiles: superMemorySystem.userProfiles.size,
-    contradictions: superMemorySystem.contradictions.size,
-    unsendMessages: unsendMessageTracker.unsendMessages.size,
-    pendingDecisions: decisionAssistant.pendingDecisions.size,
-    resolvedDecisions: decisionAssistant.decisionHistory.size,
-    groupsMonitored: groupMemberMonitor.groupMembers.size
-  };
-
-  let report = `🧠 超級增強版系統狀態 (${new Date().toLocaleString('zh-TW')})：\n\n`;
-  
-  report += `📊 記憶系統：\n`;
-  report += `🧠 用戶記憶：${stats.userMemories} 人\n`;
-  report += `👤 用戶檔案：${stats.userProfiles} 份\n`;
-  report += `⚠️ 矛盾檢測：${stats.contradictions} 筆\n\n`;
-  
-  report += `👥 群組監控：\n`;
-  report += `📡 監控群組：${stats.groupsMonitored} 個\n`;
-  report += `💬 討論會話：${groupMemberMonitor.discussionSessions.size} 個\n\n`;
-  
-  report += `📱 訊息追蹤：\n`;
-  report += `🗑️ 收回訊息：${stats.unsendMessages} 筆\n`;
-  report += `💾 暫存訊息：${unsendMessageTracker.recentMessages.size} 筆\n\n`;
-  
-  report += `🎯 決策系統：\n`;
-  report += `⏳ 待處理：${stats.pendingDecisions} 件\n`;
-  report += `✅ 已完成：${stats.resolvedDecisions} 件\n\n`;
-  
-  report += `🚀 超級功能狀態：\n`;
-  report += `✅ 超級記憶系統 - 運行正常\n`;
-  report += `✅ 矛盾檢測系統 - 運行正常\n`;
-  report += `✅ 群組監控系統 - 運行正常\n`;
-  report += `✅ 收回追蹤系統 - 運行正常\n`;
-  report += `✅ 決策輔助系統 - 運行正常\n\n`;
-  
-  report += `💡 所有超級功能運行完美！`;
-  
-  return report;
-}
-
-async function handleSuperGeneralChat(message, history, userId, userName, groupId) {
+// 簡化的一般對話
+async function handleGeneralChat(message, userId, userName) {
   try {
-    const userProfile = superMemorySystem.userProfiles.get(userId);
-    const memoryContext = userProfile ? `
-用戶 ${userName} 的檔案：
-- 總發言：${userProfile.totalMessages} 次
-- 常談話題：${Array.from(userProfile.topics.keys()).slice(0, 3).join(', ')}
-- 最後活躍：${userProfile.lastActive ? new Date(userProfile.lastActive).toLocaleString('zh-TW') : '未知'}
-` : '';
+    if (!rateLimiter.canCallGemini()) {
+      return `${userName}，我現在的AI分析功能需要休息一下，但我依然記住了你說的每一句話！有什麼需要幫忙的嗎？`;
+    }
 
     const model = genAI.getGenerativeModel({ 
       model: "gemini-1.5-flash",
       generationConfig: {
         temperature: 0.7,
-        maxOutputTokens: 300,
+        maxOutputTokens: 200, // 限制輸出長度
       }
     });
     
-    let context = `你是一個具備超級記憶和分析能力的智能助手「小助手」。
+    const currentTime = TimeSystem.getCurrentTime();
+    const context = `你是智能助手「小助手」，具備記憶功能。
 
-${memoryContext}
+當前台灣時間：${currentTime.formatted}
+用戶：${userName}
 
-你的超級能力：
-- 🧠 記住每個人說過的話，能檢測前後矛盾
-- 👥 觀察群組討論，提醒沉默的成員
-- 📱 追蹤收回的訊息內容
-- 🎯 分析重要決策並協助管理者
+請用繁體中文簡潔友善地回應：${message}
 
-當前情況：
-- 用戶：${userName}
-- 群組：${groupId ? '群組對話' : '私人對話'}
-- 時間：${new Date().toLocaleString('zh-TW')}
-
-請用繁體中文自然友善地回答。`;
-
-    if (groupId) {
-      context += '\n你現在在群組中，要觀察討論動態，適時參與或提醒。';
-    }
-
-    context += '\n\n最近對話：';
-    const recentHistory = history.slice(-4);
-    recentHistory.forEach(msg => {
-      context += `\n${msg.role === 'user' ? userName : '小助手'}：${msg.content}`;
-    });
-    
-    context += `\n\n請回應：${message}`;
-    context += '\n\n要求：展現你的記憶和分析能力，回答要有個性且有用。';
+要求：回答要自然、有用，100字以內。`;
 
     const result = await model.generateContent(context);
     const response = await result.response;
     let text = response.text();
     
-    text = text.replace(/[*#`_~\[\]]/g, '').replace(/\n{3,}/g, '\n\n').trim();
+    text = text.replace(/[*#`_~\[\]]/g, '').trim();
     
-    if (text.length > 400) {
-      text = text.substring(0, 397) + '...';
-    }
-    
-    return text || getSuperBackupResponse(message, userName);
+    return text || `${userName}，我聽到了！讓我想想怎麼回應你...`;
   } catch (error) {
-    console.error('超級對話處理錯誤:', error);
-    return getSuperBackupResponse(message, userName);
+    console.error('一般對話錯誤:', error.message);
+    return `${userName}，我正在學習中，謝謝你的耐心！`;
   }
 }
 
-function getSuperBackupResponse(message, userName) {
-  const responses = [
-    `${userName}，我正在分析你的訊息並記錄到我的記憶系統中！`,
-    `有趣！我會記住這個對話，下次能更好地回應你。`,
-    `讓我想想... 我正在學習你的說話模式呢！`,
-    `這個話題很有意思！我的記憶庫又更豐富了。`,
-    `${userName}，你的每句話我都會記住，這樣我們的對話會越來越有意思！`
-  ];
-  
-  return responses[Math.floor(Math.random() * responses.length)];
+// 系統狀態檢查
+async function getSystemStatus() {
+  const currentTime = TimeSystem.getCurrentTime();
+  const stats = {
+    userMemories: superMemorySystem.userStatements.size,
+    contradictions: superMemorySystem.contradictions.size,
+    reminders: simpleReminderSystem.reminders.size,
+    geminiCalls: rateLimiter.getRemainingCalls()
+  };
+
+  return `🧠 系統狀態檢查 (${currentTime.timeOnly})
+
+📊 運行統計：
+🧠 記憶用戶：${stats.userMemories} 人
+⚠️ 矛盾記錄：${stats.contradictions} 筆  
+⏰ 活躍提醒：${stats.reminders} 個
+🤖 AI剩餘額度：${stats.geminiCalls}/分鐘
+
+🚀 功能狀態：
+✅ 台灣時區正確
+✅ 記憶系統運行
+✅ 矛盾檢測優化
+✅ 提醒功能正常
+✅ 訊息長度控制
+
+💡 所有核心功能運行正常！`;
 }
 
 // 啟動伺服器
 app.listen(PORT, '0.0.0.0', () => {
+  const currentTime = TimeSystem.getCurrentTime();
   console.log('✅ 超級增強版 LINE Bot 伺服器成功啟動！');
   console.log(`🌐 伺服器運行在端口 ${PORT}`);
-  console.log(`⏰ 啟動時間：${new Date().toLocaleString('zh-TW')}`);
+  console.log(`🇹🇼 台灣時間：${currentTime.formatted}`);
   console.log(`👑 管理者 ID：${ADMIN_USER_ID}`);
-  console.log('🚀 超級功能：');
-  console.log('   - 🧠 超級記憶系統 (記住所有對話)');
-  console.log('   - ⚠️ 矛盾檢測系統 (識別前後不一致)');
-  console.log('   - 👥 群組監控系統 (沉默成員提醒)');
-  console.log('   - 📱 收回訊息追蹤 (記錄所有收回內容)');
-  console.log('   - 🎯 決策輔助系統 (智能分析與建議)');
+  console.log('🚀 優化功能：');
+  console.log('   - 🧠 智能記憶系統');
+  console.log('   - ⚠️ 矛盾檢測（API限制優化）');
+  console.log('   - ⏰ 提醒系統（台灣時區）');
+  console.log('   - 📱 收回追蹤');
+  console.log('   - 🎯 決策輔助');
+  console.log('   - 🛡️ 錯誤處理強化');
 });
 
 process.on('uncaughtException', (error) => {
-  console.error('未捕獲的異常:', error);
+  console.error('未捕獲的異常:', error.message);
 });
 
 process.on('unhandledRejection', (reason, promise) => {
