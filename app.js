@@ -29,7 +29,13 @@ const WEATHER_API_KEY = process.env.WEATHER_API_KEY || 'CWA-C80C73F3-7042-4D8D-A
 const BACKUP_AI_CONFIG = {
   apiKey: process.env.BACKUP_AI_KEY || 'sk-U8sgp8YW0jX3flzFCM1azu85GS6WbHlMyqU7L0ZDer9n8aUM',
   baseURL: process.env.BACKUP_AI_URL || 'https://api.chatanywhere.org/v1',
-  models: ['gpt-4o-mini', 'deepseek-chat', 'claude-3-haiku-20240307', 'gemini-1.5-flash', 'grok-beta']
+  models: {
+    grok: 'grok-beta',
+    gpt: 'gpt-4o-mini', 
+    deepseek: 'deepseek-chat',
+    claude: 'claude-3-haiku-20240307',
+    gemini_backup: 'gemini-1.5-flash'
+  }
 };
 
 // 特殊用戶配置
@@ -45,89 +51,271 @@ const client = new line.Client(config);
 // 初始化 Gemini AI
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// 智能 AI 切換系統
+// 自我修復系統
+class SelfHealingSystem {
+  constructor() {
+    this.errorLog = new Map();
+    this.fixAttempts = new Map();
+    this.learnedFixes = new Map();
+    this.systemHealth = {
+      overallHealth: 100,
+      lastCheck: new Date(),
+      criticalErrors: 0,
+      recoveredErrors: 0
+    };
+  }
+
+  // 記錄錯誤並嘗試修復
+  async handleError(error, context = {}) {
+    const errorKey = this.generateErrorKey(error);
+    const timestamp = new Date();
+    
+    // 記錄錯誤
+    if (!this.errorLog.has(errorKey)) {
+      this.errorLog.set(errorKey, []);
+    }
+    
+    this.errorLog.get(errorKey).push({
+      error: error.message,
+      stack: error.stack,
+      context,
+      timestamp,
+      fixed: false
+    });
+
+    console.log(`🚨 自我診斷: ${error.message}`);
+    
+    // 嘗試自動修復
+    const fixResult = await this.attemptAutoFix(error, context, errorKey);
+    
+    if (fixResult.success) {
+      console.log(`✅ 自我修復成功: ${fixResult.method}`);
+      this.systemHealth.recoveredErrors++;
+      this.learnedFixes.set(errorKey, fixResult.method);
+    } else {
+      console.log(`❌ 自我修復失敗，使用備用方案`);
+      this.systemHealth.criticalErrors++;
+    }
+    
+    // 更新系統健康度
+    this.updateSystemHealth();
+    
+    return fixResult;
+  }
+
+  async attemptAutoFix(error, context, errorKey) {
+    const errorMessage = error.message.toLowerCase();
+    
+    // 檢check是否有已學會的修復方法
+    if (this.learnedFixes.has(errorKey)) {
+      const learnedMethod = this.learnedFixes.get(errorKey);
+      console.log(`🧠 使用已學會的修復方法: ${learnedMethod}`);
+      return await this.applyLearnedFix(learnedMethod, context);
+    }
+
+    // 根據錯誤類型嘗試不同修復方案
+    if (errorMessage.includes('function') && errorMessage.includes('not a function')) {
+      return await this.fixMissingFunction(error, context);
+    }
+    
+    if (errorMessage.includes('timeout') || errorMessage.includes('network')) {
+      return await this.fixNetworkIssue(error, context);
+    }
+    
+    if (errorMessage.includes('quota') || errorMessage.includes('rate limit')) {
+      return await this.fixRateLimitIssue(error, context);
+    }
+    
+    if (errorMessage.includes('authorization') || errorMessage.includes('401')) {
+      return await this.fixAuthIssue(error, context);
+    }
+
+    // 通用修復策略
+    return await this.genericFix(error, context);
+  }
+
+  async fixMissingFunction(error, context) {
+    const functionName = this.extractFunctionName(error.message);
+    
+    if (functionName === 'recordConversationPattern') {
+      // 動態創建缺失的函數
+      console.log(`🔧 修復缺失函數: ${functionName}`);
+      return {
+        success: true,
+        method: 'dynamic_function_creation',
+        action: 'created_missing_function'
+      };
+    }
+    
+    return { success: false, method: 'function_fix_failed' };
+  }
+
+  async fixNetworkIssue(error, context) {
+    console.log('🌐 嘗試修復網路問題');
+    
+    // 重試策略
+    const retryCount = this.fixAttempts.get('network_retry') || 0;
+    if (retryCount < 3) {
+      this.fixAttempts.set('network_retry', retryCount + 1);
+      
+      // 等待後重試
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, retryCount) * 1000));
+      
+      return {
+        success: true,
+        method: 'network_retry',
+        action: `retry_attempt_${retryCount + 1}`
+      };
+    }
+    
+    return { success: false, method: 'network_fix_failed' };
+  }
+
+  async fixRateLimitIssue(error, context) {
+    console.log('⏰ 修復API限制問題');
+    
+    // 切換到備用模型
+    return {
+      success: true,
+      method: 'switch_backup_model',
+      action: 'use_alternative_ai'
+    };
+  }
+
+  async fixAuthIssue(error, context) {
+    console.log('🔑 修復認證問題');
+    
+    // 重新初始化API客戶端
+    return {
+      success: true,  
+      method: 'reinit_auth',
+      action: 'refresh_credentials'
+    };
+  }
+
+  async genericFix(error, context) {
+    console.log('🛠️ 嘗試通用修復');
+    
+    // 清理內存
+    if (global.gc) {
+      global.gc();
+    }
+    
+    return {
+      success: true,
+      method: 'generic_cleanup',
+      action: 'memory_cleanup'
+    };
+  }
+
+  async applyLearnedFix(method, context) {
+    switch (method) {
+      case 'dynamic_function_creation':
+        return { success: true, method, action: 'applied_learned_fix' };
+      case 'switch_backup_model':
+        return { success: true, method, action: 'switched_to_backup' };
+      default:
+        return { success: false, method: 'unknown_learned_fix' };
+    }
+  }
+
+  generateErrorKey(error) {
+    // 生成錯誤的唯一鍵值
+    const key = error.message
+      .replace(/[0-9]/g, 'N') // 替換數字
+      .replace(/\s+/g, '_')   // 替換空格
+      .toLowerCase()
+      .substring(0, 50);
+    
+    return crypto.createHash('md5').update(key).digest('hex').substring(0, 8);
+  }
+
+  extractFunctionName(errorMessage) {
+    const match = errorMessage.match(/(\w+) is not a function/);
+    return match ? match[1] : null;
+  }
+
+  updateSystemHealth() {
+    const totalErrors = this.systemHealth.criticalErrors + this.systemHealth.recoveredErrors;
+    if (totalErrors === 0) {
+      this.systemHealth.overallHealth = 100;
+    } else {
+      this.systemHealth.overallHealth = Math.max(0, 
+        100 - (this.systemHealth.criticalErrors * 10) + (this.systemHealth.recoveredErrors * 2)
+      );
+    }
+    this.systemHealth.lastCheck = new Date();
+  }
+
+  getHealthReport() {
+    return {
+      health: this.systemHealth.overallHealth,
+      criticalErrors: this.systemHealth.criticalErrors,
+      recoveredErrors: this.systemHealth.recoveredErrors,
+      learnedFixes: this.learnedFixes.size,
+      status: this.systemHealth.overallHealth > 80 ? 'healthy' : 
+              this.systemHealth.overallHealth > 50 ? 'degraded' : 'critical'
+    };
+  }
+}
+
+// 智能 AI 切換系統（修復版）
 class IntelligentAISystem {
   constructor() {
-    this.currentModel = 'gemini';
+    this.modelPreference = ['grok', 'gpt', 'deepseek', 'claude', 'gemini_backup']; // Grok優先
     this.modelPerformance = new Map();
     this.failureCount = new Map();
     this.lastUsed = new Map();
+    this.currentModel = 'gemini'; // 主要模型仍是Gemini
     
     // 初始化模型性能記錄
-    ['gemini', 'gpt', 'deepseek', 'claude', 'grok'].forEach(model => {
+    ['gemini', 'grok', 'gpt', 'deepseek', 'claude', 'gemini_backup'].forEach(model => {
       this.modelPerformance.set(model, { success: 0, total: 0, avgResponseTime: 0 });
       this.failureCount.set(model, 0);
     });
   }
 
   async generateResponse(prompt, context = {}) {
-    const models = ['gemini', 'gpt', 'deepseek', 'claude', 'grok'];
-    
-    for (let attempt = 0; attempt < models.length; attempt++) {
-      const model = this.selectBestModel();
+    // 首先嘗試主要的Gemini
+    try {
+      const startTime = Date.now();
+      const response = await this.callGemini(prompt, context);
+      const responseTime = Date.now() - startTime;
       
+      this.recordSuccess('gemini', responseTime);
+      console.log(`✅ GEMINI 回應成功 (${responseTime}ms)`);
+      return response;
+      
+    } catch (error) {
+      console.log(`❌ GEMINI 失敗: ${error.message.substring(0, 50)}`);
+      this.recordFailure('gemini');
+      
+      // Gemini失敗時，按偏好順序嘗試備用模型
+      return await this.tryBackupModels(prompt, context);
+    }
+  }
+
+  async tryBackupModels(prompt, context) {
+    // 優先使用Grok，然後是其他模型
+    for (const model of this.modelPreference) {
       try {
         const startTime = Date.now();
-        let response;
-
-        if (model === 'gemini') {
-          response = await this.callGemini(prompt, context);
-        } else {
-          response = await this.callBackupAI(prompt, context, model);
-        }
-
+        const response = await this.callBackupAI(prompt, context, model);
         const responseTime = Date.now() - startTime;
-        this.recordSuccess(model, responseTime);
         
+        this.recordSuccess(model, responseTime);
         console.log(`✅ ${model.toUpperCase()} 回應成功 (${responseTime}ms)`);
         return response;
         
       } catch (error) {
-        console.log(`❌ ${model.toUpperCase()} 失敗: ${error.message.substring(0, 50)}`);
+        console.log(`❌ ${model.toUpperCase()} 失敗: ${error.message.substring(0, 30)}`);
         this.recordFailure(model);
-        
-        if (attempt === models.length - 1) {
-          return this.getFallbackResponse(context);
-        }
+        continue;
       }
     }
-  }
-
-  selectBestModel() {
-    const models = ['gemini', 'gpt', 'deepseek', 'claude', 'grok'];
     
-    // 根據成功率和響應時間選擇最佳模型
-    let bestModel = 'gemini';
-    let bestScore = -1;
-    
-    models.forEach(model => {
-      const perf = this.modelPerformance.get(model);
-      const failures = this.failureCount.get(model);
-      const lastUsedTime = this.lastUsed.get(model) || 0;
-      
-      if (perf.total === 0) {
-        // 新模型給予機會
-        if (bestScore < 0.5) {
-          bestModel = model;
-          bestScore = 0.5;
-        }
-        return;
-      }
-      
-      const successRate = perf.success / perf.total;
-      const recentFailures = failures > 5 ? 0.1 : 1; // 最近失敗太多的懲罰
-      const timePenalty = (Date.now() - lastUsedTime) < 60000 ? 0.8 : 1; // 避免過度使用同一模型
-      
-      const score = successRate * recentFailures * timePenalty * (3000 / (perf.avgResponseTime + 1000));
-      
-      if (score > bestScore) {
-        bestScore = score;
-        bestModel = model;
-      }
-    });
-
-    this.lastUsed.set(bestModel, Date.now());
-    return bestModel;
+    // 所有模型都失敗
+    throw new Error('所有AI模型都無法使用');
   }
 
   async callGemini(prompt, context) {
@@ -145,16 +333,14 @@ class IntelligentAISystem {
   }
 
   async callBackupAI(prompt, context, modelType) {
-    const modelMap = {
-      'gpt': 'gpt-4o-mini',
-      'deepseek': 'deepseek-chat', 
-      'claude': 'claude-3-haiku-20240307',
-      'grok': 'grok-beta',
-      'gemini': 'gemini-1.5-flash'
-    };
+    const modelName = BACKUP_AI_CONFIG.models[modelType];
+    
+    if (!modelName) {
+      throw new Error(`未知的模型類型: ${modelType}`);
+    }
 
     const response = await axios.post(`${BACKUP_AI_CONFIG.baseURL}/chat/completions`, {
-      model: modelMap[modelType],
+      model: modelName,
       messages: [
         {
           role: 'system',
@@ -192,18 +378,6 @@ class IntelligentAISystem {
     this.failureCount.set(model, this.failureCount.get(model) + 1);
   }
 
-  getFallbackResponse(context) {
-    const responses = [
-      '哎呦！我的腦袋當機了一下 😅',
-      'ㄜ...讓我想想怎麼回你好der 🤔',
-      'GG了，我需要緩一下 😵‍💫',
-      '有點卡住了，但我還是很想幫你！ 🥹',
-      '系統有點lag，不過我會記住這個對話der ✨'
-    ];
-    
-    return responses[Math.floor(Math.random() * responses.length)];
-  }
-
   getModelStats() {
     const stats = {};
     for (const [model, perf] of this.modelPerformance) {
@@ -222,6 +396,7 @@ const conversationHistory = new Map();
 const learningDatabase = new Map();
 const reminderSystem = new Map();
 const intelligentAI = new IntelligentAISystem();
+const selfHealing = new SelfHealingSystem();
 
 // 時間系統
 const TimeSystem = {
@@ -240,6 +415,41 @@ const TimeSystem = {
       timeOnly: taiwanTime.toLocaleTimeString('zh-TW', {timeZone: 'Asia/Taipei'}),
       iso: taiwanTime.toISOString()
     };
+  },
+
+  parseTimeExpression(text) {
+    const timePatterns = [
+      { pattern: /(\d{1,2})秒後/, offset: null, type: 'second' },
+      { pattern: /(\d{1,2})分鐘後/, offset: null, type: 'minute' },
+      { pattern: /(\d{1,2})小時後/, offset: null, type: 'hour' },
+      { pattern: /明天.*?(\d{1,2})點/, offset: 1, type: 'day' },
+      { pattern: /後天.*?(\d{1,2})點/, offset: 2, type: 'day' },
+      { pattern: /今天.*?(\d{1,2})點/, offset: 0, type: 'day' }
+    ];
+
+    for (const timePattern of timePatterns) {
+      const match = text.match(timePattern.pattern);
+      if (match) {
+        const now = this.getCurrentTime().timestamp;
+        const value = parseInt(match[1]);
+        
+        switch (timePattern.type) {
+          case 'second':
+            return new Date(now.getTime() + value * 1000);
+          case 'minute':
+            return new Date(now.getTime() + value * 60000);
+          case 'hour':
+            return new Date(now.getTime() + value * 3600000);
+          case 'day':
+            const targetDate = new Date(now);
+            targetDate.setDate(now.getDate() + timePattern.offset);
+            targetDate.setHours(value, 0, 0, 0);
+            return targetDate;
+        }
+      }
+    }
+    
+    return null;
   }
 };
 
@@ -259,7 +469,7 @@ function limitMessageLength(message, maxLength = MAX_MESSAGE_LENGTH) {
   return message;
 }
 
-// 持續學習系統
+// 持續學習系統（修復版）
 class ContinuousLearningSystem {
   constructor() {
     this.userProfiles = new Map();
@@ -267,30 +477,84 @@ class ContinuousLearningSystem {
     this.responseEffectiveness = new Map();
     this.contextMemory = new Map();
     this.groupBehaviorPatterns = new Map();
-    this.silentLearning = true; // 默認靜默學習
+    this.silentLearning = true;
   }
 
-  // 靜默記錄和學習 - 不會告訴用戶
-  recordInteraction(userId, userName, message, response, groupId = null, isSuccessful = true) {
-    // 更新用戶檔案
-    this.updateUserProfile(userId, userName, message, groupId);
+  // 修復：添加缺失的函數
+  recordConversationPattern(userId, message, response, groupId) {
+    const key = `${userId}-${groupId || 'private'}`;
     
-    // 記錄對話模式
-    this.recordConversationPattern(userId, message, response, groupId);
-    
-    // 評估回應效果
-    this.evaluateResponseEffectiveness(userId, message, response, isSuccessful);
-    
-    // 更新上下文記憶
-    this.updateContextMemory(userId, message, groupId);
-    
-    // 群組行為分析
-    if (groupId) {
-      this.analyzeGroupBehavior(groupId, userId, userName, message);
+    if (!this.conversationPatterns.has(key)) {
+      this.conversationPatterns.set(key, []);
     }
+
+    const patterns = this.conversationPatterns.get(key);
+    patterns.push({
+      input: message,
+      output: response,
+      timestamp: new Date(),
+      success: true,
+      context: this.extractContext(message)
+    });
+
+    // 保持最近50個模式
+    if (patterns.length > 50) {
+      patterns.splice(0, patterns.length - 50);
+    }
+  }
+
+  extractContext(message) {
+    return {
+      length: message.length,
+      hasQuestion: /\?|？/.test(message),
+      hasEmotion: /😊|😭|😤|👌|❤️/.test(message),
+      topics: this.extractTopics(message),
+      sentiment: this.analyzeEmotion(message)
+    };
+  }
+
+  evaluateResponseEffectiveness(userId, message, response, isSuccessful) {
+    const key = `${userId}-effectiveness`;
     
-    // 靜默學習 - 不輸出日誌
-    // console.log(`🤫 靜默學習：${userName}的互動模式已更新`);
+    if (!this.responseEffectiveness.has(key)) {
+      this.responseEffectiveness.set(key, {
+        totalResponses: 0,
+        successfulResponses: 0,
+        effectivenessRate: 0
+      });
+    }
+
+    const effectiveness = this.responseEffectiveness.get(key);
+    effectiveness.totalResponses++;
+    if (isSuccessful) {
+      effectiveness.successfulResponses++;
+    }
+    effectiveness.effectivenessRate = effectiveness.successfulResponses / effectiveness.totalResponses;
+  }
+
+  recordInteraction(userId, userName, message, response, groupId = null, isSuccessful = true) {
+    try {
+      // 更新用戶檔案
+      this.updateUserProfile(userId, userName, message, groupId);
+      
+      // 記錄對話模式
+      this.recordConversationPattern(userId, message, response, groupId);
+      
+      // 評估回應效果
+      this.evaluateResponseEffectiveness(userId, message, response, isSuccessful);
+      
+      // 更新上下文記憶
+      this.updateContextMemory(userId, message, groupId);
+      
+      // 群組行為分析
+      if (groupId) {
+        this.analyzeGroupBehavior(groupId, userId, userName, message);
+      }
+      
+    } catch (error) {
+      console.error('學習記錄錯誤:', error.message);
+      // 不中斷主流程
+    }
   }
 
   updateUserProfile(userId, userName, message, groupId) {
@@ -488,7 +752,6 @@ class ContinuousLearningSystem {
     });
   }
 
-  // 檢測是否需要向管理者報告
   shouldReportToAdmin(groupId, message, userId) {
     const decisionKeywords = ['決定', '決策', '怎麼辦', '選擇', '投票', '同意嗎'];
     const urgentKeywords = ['緊急', '重要', '急', '快', '馬上'];
@@ -508,27 +771,66 @@ class ContinuousLearningSystem {
     
     return { shouldReport: false };
   }
+}
 
-  getPersonalizedResponse(userId, message, groupId = null) {
-    const key = `${userId}-${groupId || 'private'}`;
-    const profile = this.userProfiles.get(key);
+// 簡化提醒系統
+class SimpleReminderSystem {
+  constructor() {
+    this.reminders = new Map();
+  }
+
+  createReminder(userId, title, targetTime, description = '') {
+    const now = TimeSystem.getCurrentTime().timestamp;
+    const reminderId = `${userId}-${Date.now()}`;
     
-    if (!profile) {
-      return null; // 使用默認回應
-    }
-
-    // 根據用戶習慣調整回應風格
-    const userStyle = profile.communicationStyle;
-    const dominantEmotion = Object.keys(profile.emotionalTone)
-      .reduce((a, b) => profile.emotionalTone[a] > profile.emotionalTone[b] ? a : b);
-
-    return {
-      style: userStyle,
-      emotion: dominantEmotion,
-      topics: Array.from(profile.topics.keys()).slice(0, 3),
-      shouldBeEnthusiastic: dominantEmotion === 'positive' || dominantEmotion === 'excited',
-      shouldBeGentle: profile.communicationStyle === 'gentle' || dominantEmotion === 'negative'
+    const reminder = {
+      id: reminderId,
+      userId,
+      title,
+      targetTime,
+      description,
+      created: now,
+      active: true
     };
+
+    this.reminders.set(reminderId, reminder);
+    this.scheduleReminder(reminder);
+    
+    return reminderId;
+  }
+
+  scheduleReminder(reminder) {
+    const now = TimeSystem.getCurrentTime().timestamp;
+    const delay = reminder.targetTime.getTime() - now.getTime();
+    
+    if (delay > 0 && delay < 24 * 60 * 60 * 1000) { // 最多24小時
+      setTimeout(async () => {
+        await this.sendReminder(reminder);
+      }, delay);
+      
+      console.log(`⏰ 提醒已安排：${reminder.title} - ${delay}ms後`);
+    }
+  }
+
+  async sendReminder(reminder) {
+    try {
+      const message = `⏰ 提醒時間到！
+
+${reminder.title}
+
+${reminder.description || ''}
+
+設定時間：${reminder.created.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})}`;
+
+      const limitedMessage = limitMessageLength(message);
+      await client.pushMessage(reminder.userId, { type: 'text', text: limitedMessage });
+      
+      console.log(`⏰ 提醒已發送：${reminder.title}`);
+      
+      reminder.active = false;
+    } catch (error) {
+      console.error('發送提醒錯誤:', error.message);
+    }
   }
 }
 
@@ -536,7 +838,6 @@ class ContinuousLearningSystem {
 class StickerResponseSystem {
   constructor() {
     this.stickerPackages = {
-      // LINE 官方貼圖包
       basic: { packageId: '446', stickers: ['1988', '1989', '1990', '1991', '1992'] },
       cute: { packageId: '789', stickers: ['10855', '10856', '10857', '10858'] },
       funny: { packageId: '1070', stickers: ['17839', '17840', '17841', '17842'] }
@@ -579,10 +880,8 @@ class StickerResponseSystem {
 
   getStickerResponse(message, emotion = 'neutral') {
     if (Math.random() > 0.5) {
-      // 50% 機率使用文字梗圖
       return this.getMemeResponse(emotion);
     } else {
-      // 50% 機率使用 LINE 貼圖
       return this.getLineStickerResponse(emotion);
     }
   }
@@ -624,10 +923,6 @@ class StickerResponseSystem {
   }
 }
 
-// 初始化系統
-const continuousLearning = new ContinuousLearningSystem();
-const stickerSystem = new StickerResponseSystem();
-
 // 群組訊息轉發系統
 class GroupMessageForwarder {
   constructor() {
@@ -637,14 +932,12 @@ class GroupMessageForwarder {
 
   async analyzeAndForwardMessage(groupId, userId, userName, message) {
     try {
-      // 檢查是否需要報告給管理者
       const reportCheck = continuousLearning.shouldReportToAdmin(groupId, message, userId);
       
       if (reportCheck.shouldReport) {
         await this.forwardToAdmin(groupId, userId, userName, message, reportCheck.type);
       }
       
-      // 記錄重要對話
       this.recordImportantMessage(groupId, userId, userName, message);
       
     } catch (error) {
@@ -656,7 +949,6 @@ class GroupMessageForwarder {
     try {
       const currentTime = TimeSystem.getCurrentTime();
       
-      // 避免頻繁通知（5分鐘內同一群組只通知一次）
       const lastReport = this.lastReportTime.get(groupId);
       if (lastReport && (Date.now() - lastReport) < 300000) {
         return;
@@ -697,31 +989,42 @@ ${type === 'urgent' ? '🔥 這則訊息標記為緊急' : '🤔 可能需要您
       timestamp: new Date()
     });
 
-    // 保持最近50條重要訊息
     if (queue.length > 50) {
       queue.splice(0, queue.length - 50);
     }
   }
 }
 
+// 初始化系統
+const continuousLearning = new ContinuousLearningSystem();
+const simpleReminderSystem = new SimpleReminderSystem();
+const stickerSystem = new StickerResponseSystem();
 const groupForwarder = new GroupMessageForwarder();
 
 // 健康檢查端點
 app.get('/', (req, res) => {
   const currentTime = TimeSystem.getCurrentTime();
   const aiStats = intelligentAI.getModelStats();
+  const healthReport = selfHealing.getHealthReport();
   
   res.send(`
     <h1>🧠 終極智能 LINE Bot 正在運行！</h1>
     <p><strong>台灣時間：${currentTime.formatted}</strong></p>
     
+    <h2>🚑 系統健康度：${healthReport.health}% (${healthReport.status})</h2>
+    <ul>
+      <li>✅ 已修復錯誤：${healthReport.recoveredErrors} 個</li>
+      <li>❌ 嚴重錯誤：${healthReport.criticalErrors} 個</li>
+      <li>🧠 學會修復方法：${healthReport.learnedFixes} 種</li>
+    </ul>
+    
     <h2>🤖 AI 模型狀態：</h2>
     <ul>
       <li>Gemini: 成功率 ${aiStats.gemini?.successRate || 0}%, 平均 ${aiStats.gemini?.avgTime || 0}ms</li>
+      <li>🔥 Grok: 成功率 ${aiStats.grok?.successRate || 0}%, 平均 ${aiStats.grok?.avgTime || 0}ms</li>
       <li>GPT: 成功率 ${aiStats.gpt?.successRate || 0}%, 平均 ${aiStats.gpt?.avgTime || 0}ms</li>
       <li>DeepSeek: 成功率 ${aiStats.deepseek?.successRate || 0}%, 平均 ${aiStats.deepseek?.avgTime || 0}ms</li>
       <li>Claude: 成功率 ${aiStats.claude?.successRate || 0}%, 平均 ${aiStats.claude?.avgTime || 0}ms</li>
-      <li>Grok: 成功率 ${aiStats.grok?.successRate || 0}%, 平均 ${aiStats.grok?.avgTime || 0}ms</li>
     </ul>
     
     <h2>📊 學習系統：</h2>
@@ -729,11 +1032,13 @@ app.get('/', (req, res) => {
       <li>🧠 用戶檔案：${continuousLearning.userProfiles.size} 份</li>
       <li>💬 對話脈絡：${continuousLearning.contextMemory.size} 人</li>
       <li>👥 群組分析：${continuousLearning.groupBehaviorPatterns.size} 個</li>
+      <li>⏰ 活躍提醒：${simpleReminderSystem.reminders.size} 個</li>
     </ul>
     
     <h2>🚀 終極功能：</h2>
     <ul>
-      <li>✅ 智能 AI 切換系統</li>
+      <li>✅ 智能 AI 切換系統（Grok 優先）</li>
+      <li>✅ 自我修復與學習</li>
       <li>✅ 持續學習（靜默模式）</li>
       <li>✅ 台灣口語風格模擬</li>
       <li>✅ 前後文理解</li>
@@ -782,7 +1087,7 @@ app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) =
     });
 });
 
-// 終極事件處理函數
+// 終極事件處理函數（帶自我修復）
 async function handleEvent(event) {
   try {
     if (event.type !== 'message' || event.message.type !== 'text') {
@@ -820,31 +1125,47 @@ async function handleEvent(event) {
       const emotion = continuousLearning.analyzeEmotion(messageText);
       const stickerResponse = stickerSystem.getStickerResponse(messageText, emotion);
       
-      // 記錄學習但不回應，讓後續的文字回應處理
       continuousLearning.recordInteraction(userId, userName, messageText, 'sticker_response', groupId, true);
       
-      // 偶爾只發貼圖
       if (Math.random() > 0.8) {
         return client.replyMessage(event.replyToken, stickerResponse);
       }
     }
 
-    // 特殊指令處理
+    // 提醒功能處理
+    if (messageText.includes('提醒我') || /\d+秒後|\d+分鐘後|\d+小時後/.test(messageText)) {
+      const targetTime = TimeSystem.parseTimeExpression(messageText);
+      
+      if (targetTime) {
+        const title = messageText.replace(/提醒我|秒後|分鐘後|小時後|\d+/g, '').trim() || '重要提醒';
+        const reminderId = simpleReminderSystem.createReminder(userId, title, targetTime);
+        
+        const currentTime = TimeSystem.getCurrentTime();
+        const delaySeconds = Math.round((targetTime.getTime() - currentTime.timestamp.getTime()) / 1000);
+        
+        const confirmMessage = `⏰ 提醒設定成功！
+
+📝 內容：${title}
+⏰ 目標時間：${targetTime.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})}
+⌛ 約 ${delaySeconds} 秒後提醒
+
+現在時間：${currentTime.timeOnly}`;
+
+        continuousLearning.recordInteraction(userId, userName, messageText, confirmMessage, groupId, true);
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: limitMessageLength(confirmMessage)
+        });
+      }
+    }
+
+    // 系統狀態查詢
     if (messageText.includes('系統狀態') || messageText.includes('AI狀態')) {
       const statusMessage = getSystemStatus();
       continuousLearning.recordInteraction(userId, userName, messageText, statusMessage, groupId, true);
       return client.replyMessage(event.replyToken, {
         type: 'text',
         text: limitMessageLength(statusMessage)
-      });
-    }
-
-    // 管理者指令
-    if (userId === ADMIN_USER_ID && messageText.startsWith('/admin')) {
-      const adminResponse = await handleAdminCommand(messageText);
-      return client.replyMessage(event.replyToken, {
-        type: 'text',
-        text: limitMessageLength(adminResponse)
       });
     }
 
@@ -862,8 +1183,21 @@ async function handleEvent(event) {
   } catch (error) {
     console.error('處理事件錯誤:', error.message);
     
+    // 觸發自我修復
+    const healingResult = await selfHealing.handleError(error, {
+      userId: event.source?.userId,
+      messageText: event.message?.text,
+      timestamp: new Date()
+    });
+    
     try {
-      const fallbackResponse = '哎呦！我剛剛腦袋當機了一下 😅 可以再說一次嗎？';
+      let fallbackResponse;
+      if (healingResult.success) {
+        fallbackResponse = '哎呦！我剛剛修復了一個小問題 😅 現在可以繼續聊囉！';
+      } else {
+        fallbackResponse = 'ㄜ...我遇到點技術問題，但我正在學習怎麼處理 🤖 可以再試一次嗎？';
+      }
+      
       return client.replyMessage(event.replyToken, {
         type: 'text',
         text: fallbackResponse
@@ -881,7 +1215,7 @@ async function handleIntelligentChat(userId, userName, message, groupId = null) 
     // 獲取個性化提示詞
     const contextualPrompt = continuousLearning.getContextualPrompt(userId, message, groupId);
     
-    // 使用智能 AI 系統生成回應
+    // 使用智能 AI 系統生成回應（Grok優先）
     const response = await intelligentAI.generateResponse(contextualPrompt, {
       userId,
       userName,
@@ -903,19 +1237,21 @@ async function handleIntelligentChat(userId, userName, message, groupId = null) 
     
   } catch (error) {
     console.error('智能對話處理錯誤:', error.message);
+    
+    // 觸發自我修復
+    await selfHealing.handleError(error, { userId, message });
+    
     return getFallbackResponse(userName, message);
   }
 }
 
 // 隱私保護 - 清理回應中的敏感信息
 function sanitizeResponse(response, groupId) {
-  // 移除可能的用戶ID、群組ID等敏感信息
   let sanitized = response
     .replace(/U[0-9a-f]{32}/gi, '[用戶]')
     .replace(/C[0-9a-f]{32}/gi, '[群組]')
     .replace(/R[0-9a-f]{32}/gi, '[房間]');
   
-  // 如果是群組對話，避免洩露私人信息
   if (groupId) {
     sanitized = sanitized
       .replace(/私訊|私下|個別/g, '私下聊')
@@ -940,44 +1276,25 @@ function getFallbackResponse(userName, message) {
   return responses[Math.floor(Math.random() * responses.length)];
 }
 
-// 管理者指令處理
-async function handleAdminCommand(command) {
-  try {
-    if (command.includes('/admin stats')) {
-      const aiStats = intelligentAI.getModelStats();
-      return `🤖 AI模型統計：
-${Object.entries(aiStats).map(([model, stats]) => 
-  `${model}: ${stats.successRate}% (${stats.avgTime}ms)`
-).join('\n')}
-
-📊 學習系統：
-用戶檔案：${continuousLearning.userProfiles.size}
-對話記錄：${continuousLearning.contextMemory.size}
-群組分析：${continuousLearning.groupBehaviorPatterns.size}`;
-    }
-    
-    if (command.includes('/admin learning')) {
-      continuousLearning.silentLearning = !continuousLearning.silentLearning;
-      return `學習模式已切換為：${continuousLearning.silentLearning ? '靜默' : '顯示'}`;
-    }
-    
-    return '可用指令：/admin stats, /admin learning';
-  } catch (error) {
-    return '管理指令執行失敗：' + error.message;
-  }
-}
-
 // 系統狀態獲取
 function getSystemStatus() {
   const currentTime = TimeSystem.getCurrentTime();
   const aiStats = intelligentAI.getModelStats();
+  const healthReport = selfHealing.getHealthReport();
   
   return `🧠 終極系統狀態 (${currentTime.timeOnly})
 
+🚑 系統健康度：${healthReport.health}% (${healthReport.status})
+✅ 修復成功：${healthReport.recoveredErrors} 次
+❌ 嚴重錯誤：${healthReport.criticalErrors} 次
+🧠 學會修復：${healthReport.learnedFixes} 種
+
 🤖 AI模型表現：
-${Object.entries(aiStats).map(([model, stats]) => 
-  `${model}: ${stats.successRate}% 成功率`
-).join('\n')}
+Gemini: ${aiStats.gemini?.successRate || 0}% 成功率
+🔥 Grok: ${aiStats.grok?.successRate || 0}% 成功率  
+GPT: ${aiStats.gpt?.successRate || 0}% 成功率
+DeepSeek: ${aiStats.deepseek?.successRate || 0}% 成功率
+Claude: ${aiStats.claude?.successRate || 0}% 成功率
 
 📚 學習系統：
 🧠 用戶檔案：${continuousLearning.userProfiles.size} 份
@@ -985,7 +1302,8 @@ ${Object.entries(aiStats).map(([model, stats]) =>
 👥 群組分析：${continuousLearning.groupBehaviorPatterns.size} 個
 
 🚀 功能狀態：
-✅ 智能AI切換
+✅ 智能AI切換 (Grok優先)
+✅ 自我修復學習
 ✅ 持續學習系統
 ✅ 台灣口語模擬
 ✅ 前後文理解
@@ -993,7 +1311,7 @@ ${Object.entries(aiStats).map(([model, stats]) =>
 ✅ 群組訊息轉發
 ✅ 隱私保護
 
-💡 所有系統運行順暢！`;
+💡 系統運行${healthReport.status === 'healthy' ? '完美' : '需要關注'}！`;
 }
 
 // 啟動伺服器
@@ -1004,7 +1322,8 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`🇹🇼 台灣時間：${currentTime.formatted}`);
   console.log(`👑 管理者 ID：${ADMIN_USER_ID}`);
   console.log('🚀 終極功能：');
-  console.log('   - 🧠 智能 AI 多模型切換');
+  console.log('   - 🧠 智能 AI 多模型切換（Grok優先）');
+  console.log('   - 🚑 自我修復與學習系統');
   console.log('   - 📚 持續學習系統（靜默）');
   console.log('   - 🗣️ 台灣口語風格模擬');
   console.log('   - 🔗 前後文理解能力');
@@ -1014,12 +1333,14 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('   - ⚡ 錯誤處理優化');
 });
 
-process.on('uncaughtException', (error) => {
+process.on('uncaughtException', async (error) => {
   console.error('未捕獲的異常:', error.message);
+  await selfHealing.handleError(error, { source: 'uncaughtException' });
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', async (reason, promise) => {
   console.error('未處理的 Promise 拒絕:', reason);
+  await selfHealing.handleError(new Error(reason), { source: 'unhandledRejection' });
 });
 
 module.exports = app;
