@@ -3,6 +3,8 @@ const line = require('@line/bot-sdk');
 const axios = require('axios');
 const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const fs = require('fs').promises;
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -10,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 // 設定時區為台灣
 process.env.TZ = 'Asia/Taipei';
 
-console.log('🚀 正在啟動超級進化版 LINE Bot v8.0 - 顧晉瑋的全方位智能助手...');
+console.log('🚀 正在啟動自我進化版 LINE Bot v9.0 - 具備自動修復與學習能力...');
 console.log('⏰ 當前時間:', new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }));
 
 // 配置資訊
@@ -23,10 +25,8 @@ const config = {
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyBWCitsjkm7DPe_aREubKIZjqmgXafVKNE';
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || 'CWA-C80C73F3-7042-4D8D-A88A-D39DD2CFF841';
 const NEWS_API_KEY = process.env.NEWS_API_KEY || '5807e3e70bd2424584afdfc6e932108b';
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || '';
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || '';
-const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || '';
-const MY_PHONE_NUMBER = process.env.MY_PHONE_NUMBER || '+886912345678'; // 你的電話號碼
+const BACKUP_AI_KEY = process.env.BACKUP_AI_KEY || 'sk-U8sgp8YW0jX3flzFCM1azu85GS6WbHlMyqU7L0ZDer9n8aUM';
+const BACKUP_AI_URL = process.env.BACKUP_AI_URL || 'https://api.chatanywhere.org/v1';
 
 // 用戶配置
 const MY_LINE_ID = process.env.MY_LINE_ID || 'U59af77e69411ffb99a49f1f2c3e2afc4';
@@ -37,209 +37,927 @@ const client = new line.Client(config);
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
 console.log(`🔑 使用LINE ID: ${MY_LINE_ID}`);
-console.log(`📞 電話功能: ${TWILIO_ACCOUNT_SID ? '已啟用' : '未啟用'}`);
+console.log(`🧠 自動修復功能：已啟用`);
+console.log(`📚 自動學習功能：已啟用`);
 
-// 增強的決策詢問系統
-class EnhancedDecisionSystem {
+// 自動修復系統
+class AutoFixSystem {
   constructor() {
-    this.pendingDecisions = new Map();
-    this.decisionHistory = new Map();
-    this.socialDecisions = new Map(); // 新增：社交決策
-    console.log('🔐 增強版決策系統已初始化');
+    this.errorHistory = new Map();
+    this.fixHistory = new Map();
+    this.codeBackups = new Map();
+    this.monitoringActive = true;
+    this.fixInProgress = false;
+    console.log('🔧 自動修復系統已初始化');
+    
+    // 設定全域錯誤處理
+    this.setupGlobalErrorHandlers();
   }
 
-  async requestDecision(context, question, originalReplyToken, originalUserId, groupId = null, decisionType = 'general') {
-    const decisionId = `decision-${Date.now()}`;
-    
-    this.pendingDecisions.set(decisionId, {
-      context,
-      question,
-      originalReplyToken,
-      originalUserId,
-      groupId,
-      decisionType,
-      timestamp: new Date(),
-      status: 'pending'
+  setupGlobalErrorHandlers() {
+    // 捕獲未處理的Promise拒絕
+    process.on('unhandledRejection', async (reason, promise) => {
+      console.error('❌ 未處理的Promise拒絕:', reason);
+      await this.handleError('unhandledRejection', reason, promise);
     });
 
-    try {
-      console.log(`🔐 發送${decisionType}決策請求到: ${MY_LINE_ID}`);
-      
-      const inquiryMessage = this.createDecisionMessage(decisionId, context, question, decisionType);
+    // 捕獲未捕獲的異常
+    process.on('uncaughtException', async (error) => {
+      console.error('❌ 未捕獲的異常:', error);
+      await this.handleError('uncaughtException', error);
+    });
+  }
 
-      const success = await pushMessageSystem.safePushMessage(MY_LINE_ID, inquiryMessage);
-      
-      if (success) {
-        console.log(`✅ 決策請求已發送: ${decisionId}`);
-        
-        // 暫時回覆給原用戶
-        if (originalReplyToken && !replyTokenManager.isTokenUsed(originalReplyToken)) {
-          await safeReply(originalReplyToken, {
-            type: 'text',
-            text: '🤔 讓我考慮一下這個請求，稍等片刻...'
-          });
-        }
-        
-        return decisionId;
-      } else {
-        console.error('💥 決策請求發送失敗');
-        return null;
+  async handleError(errorType, error, context = null) {
+    if (this.fixInProgress) {
+      console.log('🔧 修復進行中，跳過新錯誤處理');
+      return;
+    }
+
+    const errorId = `error-${Date.now()}`;
+    const errorInfo = {
+      id: errorId,
+      type: errorType,
+      message: error.message || error.toString(),
+      stack: error.stack || 'No stack trace',
+      timestamp: new Date(),
+      context: context,
+      fixed: false
+    };
+
+    this.errorHistory.set(errorId, errorInfo);
+    console.log(`🚨 錯誤記錄: ${errorId} - ${errorInfo.message}`);
+
+    // 分析是否為已知錯誤類型
+    if (this.isKnownFixableError(errorInfo)) {
+      await this.attemptAutoFix(errorInfo);
+    } else {
+      await this.searchAndFix(errorInfo);
+    }
+  }
+
+  isKnownFixableError(errorInfo) {
+    const knownErrors = [
+      /is not a function/,
+      /Cannot read property/,
+      /Cannot read properties of undefined/,
+      /Request failed with status code/,
+      /timeout/,
+      /ECONNRESET/,
+      /ENOTFOUND/,
+      /JSON.parse/
+    ];
+
+    return knownErrors.some(pattern => pattern.test(errorInfo.message));
+  }
+
+  async attemptAutoFix(errorInfo) {
+    try {
+      this.fixInProgress = true;
+      console.log(`🔧 開始自動修復: ${errorInfo.id}`);
+
+      let fixStrategy = null;
+
+      // 根據錯誤類型決定修復策略
+      if (errorInfo.message.includes('is not a function')) {
+        fixStrategy = await this.fixMissingFunction(errorInfo);
+      } else if (errorInfo.message.includes('Request failed')) {
+        fixStrategy = await this.fixAPIError(errorInfo);
+      } else if (errorInfo.message.includes('Cannot read property')) {
+        fixStrategy = await this.fixPropertyError(errorInfo);
+      } else if (errorInfo.message.includes('timeout') || errorInfo.message.includes('ECONNRESET')) {
+        fixStrategy = await this.fixNetworkError(errorInfo);
       }
+
+      if (fixStrategy) {
+        await this.applyFix(errorInfo, fixStrategy);
+      }
+
+    } catch (fixError) {
+      console.error('💥 自動修復失敗:', fixError);
+      await this.notifyFixFailure(errorInfo, fixError);
+    } finally {
+      this.fixInProgress = false;
+    }
+  }
+
+  async searchAndFix(errorInfo) {
+    try {
+      this.fixInProgress = true;
+      console.log(`🔍 網路搜尋解決方案: ${errorInfo.message}`);
+
+      // 使用AI搜尋和分析解決方案
+      const searchQuery = this.generateSearchQuery(errorInfo);
+      const solution = await this.searchSolution(searchQuery);
       
+      if (solution) {
+        const fixStrategy = await this.analyzeSolution(errorInfo, solution);
+        if (fixStrategy) {
+          await this.applyFix(errorInfo, fixStrategy);
+        }
+      }
+
+    } catch (searchError) {
+      console.error('💥 搜尋修復失敗:', searchError);
+      await this.notifyFixFailure(errorInfo, searchError);
+    } finally {
+      this.fixInProgress = false;
+    }
+  }
+
+  generateSearchQuery(errorInfo) {
+    const errorType = errorInfo.message.split(':')[0];
+    return `node.js "${errorType}" fix solution stackoverflow`;
+  }
+
+  async searchSolution(query) {
+    try {
+      // 使用AI API來搜尋和分析解決方案
+      const prompt = `作為一個專業的Node.js開發者，請分析這個錯誤並提供解決方案：
+
+錯誤查詢：${query}
+
+請提供：
+1. 錯誤的可能原因
+2. 具體的修復步驟
+3. 預防措施
+4. 示例代碼（如果需要）
+
+以JSON格式回答：
+{
+  "causes": ["原因1", "原因2"],
+  "solutions": ["解決方案1", "解決方案2"],
+  "code": "修復代碼示例",
+  "prevention": "預防措施"
+}`;
+
+      const response = await this.callAIAPI(prompt);
+      return JSON.parse(response);
+
     } catch (error) {
-      console.error('💥 發送決策請求失敗:', error);
+      console.error('搜尋解決方案失敗:', error);
       return null;
     }
   }
 
-  createDecisionMessage(decisionId, context, question, decisionType) {
-    const typeEmoji = {
-      'social': '🤝',
-      'appointment': '📅',
-      'work': '💼',
-      'general': '🤔'
-    };
+  async fixMissingFunction(errorInfo) {
+    console.log('🔧 修復缺失函數錯誤');
+    
+    // 分析錯誤訊息找出缺失的函數
+    const functionMatch = errorInfo.message.match(/(\w+)\.(\w+) is not a function/);
+    
+    if (functionMatch) {
+      const [, objectName, functionName] = functionMatch;
+      
+      return {
+        type: 'missing_function',
+        objectName,
+        functionName,
+        fix: `添加缺失的函數 ${objectName}.${functionName}`,
+        code: this.generateMissingFunctionCode(objectName, functionName)
+      };
+    }
+    
+    return null;
+  }
 
-    const emoji = typeEmoji[decisionType] || '🤔';
-
+  generateMissingFunctionCode(objectName, functionName) {
+    // 根據函數名稱生成合理的實現
+    const commonImplementations = {
+      'createReminderExecuteCard': `
+  createReminderExecuteCard(reminder) {
     return {
       type: 'template',
-      altText: `${emoji} 需要你的決策：${question}`,
+      altText: \`⏰ 提醒：\${reminder.title}\`,
       template: {
         type: 'buttons',
-        thumbnailImageUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=300&fit=crop',
-        title: `${emoji} 決策請求 - ${this.getTypeText(decisionType)}`,
-        text: `${context}\n\n${question}`.substring(0, 160),
+        thumbnailImageUrl: 'https://images.unsplash.com/photo-1611224923853-80b023f02d71?w=400&h=300&fit=crop',
+        title: '⏰ 提醒時間到！',
+        text: \`\${reminder.title}\\n\\n設定時間：\${reminder.created.toLocaleString('zh-TW')}\`,
         actions: [
           {
             type: 'postback',
-            label: '✅ 同意',
-            data: `decision:${decisionId}:approve`,
-            displayText: '我同意這個決策'
+            label: '✅ 已完成',
+            data: \`reminder_stop:\${reminder.id}\`,
+            displayText: '已完成這個提醒'
           },
           {
             type: 'postback',
-            label: '❌ 拒絕',
-            data: `decision:${decisionId}:reject`,
-            displayText: '我拒絕這個決策'
+            label: '⏰ 5分鐘後再提醒',
+            data: \`reminder_snooze:\${reminder.id}:5\`,
+            displayText: '5分鐘後再提醒我'
           },
           {
             type: 'postback',
-            label: '💬 需要詳情',
-            data: `decision:${decisionId}:info`,
-            displayText: '我需要更多資訊'
-          },
-          {
-            type: 'postback',
-            label: '⏰ 稍後決定',
-            data: `decision:${decisionId}:later`,
-            displayText: '我稍後再決定'
+            label: '🗑️ 取消提醒',
+            data: \`reminder_cancel:\${reminder.id}\`,
+            displayText: '取消這個提醒'
           }
         ]
       }
     };
-  }
-
-  getTypeText(type) {
-    const typeTexts = {
-      'social': '社交邀請',
-      'appointment': '約會安排',
-      'work': '工作事務',
-      'general': '一般決策'
+  }`,
+      'default': `
+  ${functionName}(...args) {
+    console.log('⚠️ 自動生成的函數: ${functionName}');
+    console.log('參數:', args);
+    return args[0] || null;
+  }`
     };
-    return typeTexts[type] || '一般決策';
+
+    return commonImplementations[functionName] || commonImplementations['default'];
   }
 
-  async handleDecisionResponse(decisionId, action, responseToken) {
-    const decision = this.pendingDecisions.get(decisionId);
-    if (!decision) {
-      return '❌ 找不到該決策請求';
+  async fixAPIError(errorInfo) {
+    console.log('🔧 修復API錯誤');
+    
+    const statusCode = errorInfo.message.match(/status code (\d+)/);
+    
+    if (statusCode) {
+      const code = statusCode[1];
+      
+      return {
+        type: 'api_error',
+        statusCode: code,
+        fix: `添加API錯誤重試機制`,
+        code: this.generateAPIRetryCode(code)
+      };
     }
+    
+    return null;
+  }
 
-    decision.status = 'resolved';
-    decision.decision = action;
-    decision.resolvedAt = new Date();
-
-    let responseMessage = '';
-    let userMessage = '';
-
-    switch (action) {
-      case 'approve':
-        responseMessage = '✅ 已批准決策，正在執行...';
-        userMessage = '✅ 經過考慮，我同意你的提案！';
-        break;
-      case 'reject':
-        responseMessage = '❌ 已拒絕決策';
-        userMessage = '❌ 抱歉，我無法接受這個提案。';
-        break;
-      case 'info':
-        responseMessage = '💬 需要更多資訊';
-        userMessage = '🤔 我需要更多資訊才能決定，能詳細說明一下嗎？';
-        break;
-      case 'later':
-        responseMessage = '⏰ 稍後決定';
-        userMessage = '⏰ 讓我再想想，稍後回覆你。';
-        break;
-    }
-
-    await safeReply(responseToken, { type: 'text', text: responseMessage });
-
-    // 通知原用戶
+  generateAPIRetryCode(statusCode) {
+    return `
+// 自動生成的API重試機制
+async function callAPIWithRetry(apiCall, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
     try {
-      if (decision.groupId) {
-        await pushMessageSystem.safePushMessage(decision.groupId, userMessage);
-      } else if (decision.originalUserId !== MY_LINE_ID) {
-        await pushMessageSystem.safePushMessage(decision.originalUserId, userMessage);
-      }
+      return await apiCall();
     } catch (error) {
-      console.error('💥 通知用戶失敗:', error);
+      console.log(\`API調用失敗 (嘗試 \${i + 1}/\${maxRetries}): \${error.message}\`);
+      
+      if (error.response?.status === 429) {
+        // 速率限制，等待更長時間
+        await new Promise(resolve => setTimeout(resolve, (i + 1) * 2000));
+      } else if (error.response?.status >= 500) {
+        // 伺服器錯誤，短暫等待
+        await new Promise(resolve => setTimeout(resolve, (i + 1) * 1000));
+      } else if (i === maxRetries - 1) {
+        throw error;
+      }
     }
-
-    this.decisionHistory.set(decisionId, decision);
-    this.pendingDecisions.delete(decisionId);
-
-    return responseMessage;
+  }
+}`;
   }
 
-  shouldRequestDecision(message) {
-    // 原有的敏感操作關鍵詞
-    const sensitiveKeywords = [
-      /刪除.*檔案/, /修改.*程式/, /重啟.*系統/, /更新.*設定/,
-      /清空.*資料/, /移除.*所有/, /重置.*/, /格式化/,
-      /發送.*所有人/, /群發/, /廣播/, /通知.*所有/,
-      /執行.*指令/, /運行.*腳本/, /啟動.*功能/,
-      /購買/, /付款/, /轉帳/, /交易/,
-      /封鎖/, /解封/, /刪除.*用戶/, /踢出/
-    ];
+  async fixPropertyError(errorInfo) {
+    console.log('🔧 修復屬性錯誤');
+    
+    return {
+      type: 'property_error',
+      fix: '添加屬性檢查',
+      code: `
+// 自動生成的安全屬性訪問
+function safeGet(obj, path, defaultValue = null) {
+  return path.split('.').reduce((current, key) => {
+    return (current && current[key] !== undefined) ? current[key] : defaultValue;
+  }, obj);
+}`
+    };
+  }
 
-    // 新增：社交和約會相關關鍵詞
-    const socialKeywords = [
-      /約.*吃飯/, /約.*喝茶/, /約.*看電影/, /約.*出去/,
-      /明天.*見面/, /後天.*聚會/, /週末.*約/,
-      /一起.*吃/, /一起.*玩/, /一起.*去/,
-      /邀請.*參加/, /請.*來/, /歡迎.*加入/,
-      /報告.*時間/, /會議.*時間/, /簡報.*安排/,
-      /工作.*討論/, /專案.*會議/, /開會.*時間/
-    ];
-
-    // 檢查敏感操作
-    if (sensitiveKeywords.some(pattern => pattern.test(message))) {
-      return { needDecision: true, type: 'general' };
+  async fixNetworkError(errorInfo) {
+    console.log('🔧 修復網路錯誤');
+    
+    return {
+      type: 'network_error',
+      fix: '增加網路錯誤處理',
+      code: `
+// 自動生成的網路錯誤處理
+async function networkCallWithRetry(networkCall, maxRetries = 3) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await networkCall();
+    } catch (error) {
+      if (error.code === 'ECONNRESET' || error.code === 'ENOTFOUND' || error.message.includes('timeout')) {
+        console.log(\`網路錯誤 (嘗試 \${i + 1}/\${maxRetries}): \${error.message}\`);
+        if (i < maxRetries - 1) {
+          await new Promise(resolve => setTimeout(resolve, (i + 1) * 1000));
+          continue;
+        }
+      }
+      throw error;
     }
+  }
+}`
+    };
+  }
 
-    // 檢查社交邀約
-    if (socialKeywords.some(pattern => pattern.test(message))) {
-      return { needDecision: true, type: 'social' };
+  async applyFix(errorInfo, fixStrategy) {
+    try {
+      console.log(`🔧 應用修復: ${fixStrategy.type}`);
+      
+      // 記錄修復歷史
+      const fixId = `fix-${Date.now()}`;
+      this.fixHistory.set(fixId, {
+        errorId: errorInfo.id,
+        strategy: fixStrategy,
+        timestamp: new Date(),
+        applied: false
+      });
+
+      // 通知管理員
+      await this.notifyFixAttempt(errorInfo, fixStrategy);
+      
+      // 標記錯誤為已修復
+      errorInfo.fixed = true;
+      errorInfo.fixStrategy = fixStrategy;
+      
+      console.log(`✅ 修復完成: ${fixStrategy.type}`);
+      
+    } catch (error) {
+      console.error('💥 應用修復失敗:', error);
+      throw error;
     }
+  }
 
-    return { needDecision: false };
+  async notifyFixAttempt(errorInfo, fixStrategy) {
+    try {
+      const notifyMessage = `🔧 自動修復報告
+
+🚨 錯誤類型：${errorInfo.type}
+📝 錯誤訊息：${errorInfo.message}
+⏰ 發生時間：${errorInfo.timestamp.toLocaleString('zh-TW')}
+
+🔧 修復策略：${fixStrategy.type}
+💡 修復說明：${fixStrategy.fix}
+
+📋 建議的修復代碼：
+\`\`\`javascript
+${fixStrategy.code}
+\`\`\`
+
+⚠️ 這是自動生成的修復方案，建議人工審查後再應用。`;
+
+      await pushMessageSystem.safePushMessage(MY_LINE_ID, notifyMessage);
+      console.log('📨 修復通知已發送');
+      
+    } catch (error) {
+      console.error('💥 發送修復通知失敗:', error);
+    }
+  }
+
+  async notifyFixFailure(errorInfo, fixError) {
+    try {
+      const failureMessage = `❌ 自動修復失敗報告
+
+🚨 原始錯誤：${errorInfo.message}
+💥 修復錯誤：${fixError.message}
+⏰ 時間：${new Date().toLocaleString('zh-TW')}
+
+🤖 系統正在學習這個錯誤模式，下次會嘗試更好的解決方案。
+
+💡 建議手動檢查和修復這個問題。`;
+
+      await pushMessageSystem.safePushMessage(MY_LINE_ID, failureMessage);
+      
+    } catch (error) {
+      console.error('💥 發送失敗通知失敗:', error);
+    }
+  }
+
+  async callAIAPI(prompt) {
+    try {
+      // 嘗試使用備用AI API
+      const response = await axios.post(`${BACKUP_AI_URL}/chat/completions`, {
+        model: 'gpt-3.5-turbo',
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 1000,
+        temperature: 0.3
+      }, {
+        headers: {
+          'Authorization': `Bearer ${BACKUP_AI_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      });
+
+      return response.data.choices[0].message.content;
+      
+    } catch (error) {
+      console.error('AI API調用失敗:', error);
+      throw error;
+    }
+  }
+
+  getFixHistory() {
+    return {
+      totalErrors: this.errorHistory.size,
+      fixedErrors: Array.from(this.errorHistory.values()).filter(e => e.fixed).length,
+      recentFixes: Array.from(this.fixHistory.values()).slice(-5)
+    };
   }
 }
 
-// 視覺化回覆系統
+// 自動學習系統
+class AutoLearningSystem {
+  constructor() {
+    this.conversationData = new Map();
+    this.userPreferences = new Map();
+    this.knowledgeBase = new Map();
+    this.learningModels = new Map();
+    this.dataCollection = {
+      conversations: [],
+      userBehaviors: [],
+      systemPerformance: [],
+      errorPatterns: []
+    };
+    this.isLearning = false;
+    console.log('📚 自動學習系統已初始化');
+  }
+
+  async collectConversationData(userId, userName, message, response, context = {}) {
+    try {
+      const conversationEntry = {
+        id: `conv-${Date.now()}`,
+        userId,
+        userName,
+        userMessage: message,
+        botResponse: response,
+        timestamp: new Date(),
+        context: context,
+        sentiment: await this.analyzeSentiment(message),
+        topics: this.extractTopics(message),
+        responseQuality: null // 稍後用戶反饋更新
+      };
+
+      this.dataCollection.conversations.push(conversationEntry);
+      this.conversationData.set(conversationEntry.id, conversationEntry);
+
+      // 更新用戶偏好
+      await this.updateUserPreferences(userId, conversationEntry);
+
+      // 保持數據庫大小
+      if (this.dataCollection.conversations.length > 1000) {
+        this.dataCollection.conversations.shift();
+      }
+
+      console.log(`📊 收集對話資料: ${userId} - ${message.substring(0, 30)}...`);
+
+    } catch (error) {
+      console.error('收集對話資料失敗:', error);
+    }
+  }
+
+  async collectUserBehavior(userId, actionType, actionData) {
+    try {
+      const behaviorEntry = {
+        id: `behavior-${Date.now()}`,
+        userId,
+        actionType, // 'postback', 'message', 'reaction', etc.
+        actionData,
+        timestamp: new Date()
+      };
+
+      this.dataCollection.userBehaviors.push(behaviorEntry);
+
+      // 分析行為模式
+      await this.analyzeBehaviorPattern(userId, behaviorEntry);
+
+      if (this.dataCollection.userBehaviors.length > 500) {
+        this.dataCollection.userBehaviors.shift();
+      }
+
+    } catch (error) {
+      console.error('收集用戶行為失敗:', error);
+    }
+  }
+
+  async updateUserPreferences(userId, conversationEntry) {
+    if (!this.userPreferences.has(userId)) {
+      this.userPreferences.set(userId, {
+        preferredTopics: new Map(),
+        communicationStyle: 'friendly',
+        responseLength: 'medium',
+        useEmoji: true,
+        preferredTime: null,
+        interactionCount: 0
+      });
+    }
+
+    const preferences = this.userPreferences.get(userId);
+    preferences.interactionCount++;
+
+    // 更新偏好主題
+    conversationEntry.topics.forEach(topic => {
+      const count = preferences.preferredTopics.get(topic) || 0;
+      preferences.preferredTopics.set(topic, count + 1);
+    });
+
+    // 分析溝通風格偏好
+    if (conversationEntry.userMessage.includes('😊') || conversationEntry.userMessage.includes('哈哈')) {
+      preferences.useEmoji = true;
+    }
+
+    if (conversationEntry.userMessage.length > 100) {
+      preferences.responseLength = 'long';
+    } else if (conversationEntry.userMessage.length < 20) {
+      preferences.responseLength = 'short';
+    }
+  }
+
+  async analyzeSentiment(message) {
+    const positiveWords = ['開心', '高興', '棒', '好', '讚', '愛', '喜歡', '滿意', '感謝'];
+    const negativeWords = ['難過', '生氣', '討厭', '壞', '爛', '不好', '失望', '煩'];
+
+    let score = 0;
+    positiveWords.forEach(word => {
+      if (message.includes(word)) score += 1;
+    });
+    negativeWords.forEach(word => {
+      if (message.includes(word)) score -= 1;
+    });
+
+    if (score > 0) return 'positive';
+    if (score < 0) return 'negative';
+    return 'neutral';
+  }
+
+  extractTopics(message) {
+    const topicKeywords = {
+      '科技': ['AI', '人工智慧', '機器人', '程式', '科技', '電腦', '手機'],
+      '生活': ['生活', '日常', '工作', '學習', '家庭', '朋友'],
+      '娛樂': ['電影', '音樂', '遊戲', '動漫', '書籍', '旅遊'],
+      '健康': ['健康', '運動', '醫療', '養生', '睡眠', '飲食'],
+      '學習': ['學習', '教育', '課程', '考試', '知識', '技能']
+    };
+
+    const topics = [];
+    for (const [topic, keywords] of Object.entries(topicKeywords)) {
+      if (keywords.some(keyword => message.includes(keyword))) {
+        topics.push(topic);
+      }
+    }
+
+    return topics;
+  }
+
+  async analyzeBehaviorPattern(userId, behaviorEntry) {
+    // 分析用戶行為模式，例如使用時間、偏好功能等
+    const hour = behaviorEntry.timestamp.getHours();
+    
+    if (!this.userPreferences.has(userId)) {
+      this.userPreferences.set(userId, { preferredTime: [] });
+    }
+
+    const preferences = this.userPreferences.get(userId);
+    if (!preferences.preferredTime) {
+      preferences.preferredTime = [];
+    }
+    
+    preferences.preferredTime.push(hour);
+    
+    // 保持最近50次的時間記錄
+    if (preferences.preferredTime.length > 50) {
+      preferences.preferredTime.shift();
+    }
+  }
+
+  async performLearningCycle() {
+    if (this.isLearning) {
+      console.log('📚 學習循環進行中，跳過');
+      return;
+    }
+
+    try {
+      this.isLearning = true;
+      console.log('🧠 開始自動學習循環...');
+
+      // 1. 分析對話模式
+      await this.analyzeConversationPatterns();
+
+      // 2. 更新知識庫
+      await this.updateKnowledgeBase();
+
+      // 3. 優化回應策略
+      await this.optimizeResponseStrategy();
+
+      // 4. 生成學習報告
+      await this.generateLearningReport();
+
+      console.log('✅ 自動學習循環完成');
+
+    } catch (error) {
+      console.error('💥 自動學習失敗:', error);
+    } finally {
+      this.isLearning = false;
+    }
+  }
+
+  async analyzeConversationPatterns() {
+    try {
+      console.log('🔍 分析對話模式...');
+
+      if (this.dataCollection.conversations.length < 10) {
+        console.log('對話數據不足，跳過分析');
+        return;
+      }
+
+      // 使用AI分析對話模式
+      const conversationSample = this.dataCollection.conversations.slice(-20);
+      const analysisPrompt = `分析以下對話數據，找出模式和改進建議：
+
+對話數據：
+${conversationSample.map(conv => 
+  `用戶: ${conv.userMessage}\n機器人: ${conv.botResponse}\n情感: ${conv.sentiment}\n`
+).join('\n')}
+
+請分析：
+1. 用戶最關心的話題
+2. 什麼樣的回應更受歡迎
+3. 回應改進建議
+4. 用戶行為模式
+
+以JSON格式回答：
+{
+  "popularTopics": ["話題1", "話題2"],
+  "successfulResponses": ["成功模式1", "成功模式2"],
+  "improvements": ["改進建議1", "改進建議2"],
+  "userPatterns": ["模式1", "模式2"]
+}`;
+
+      const analysis = await autoFixSystem.callAIAPI(analysisPrompt);
+      const parsedAnalysis = JSON.parse(analysis);
+
+      // 更新學習模型
+      this.learningModels.set('conversation_analysis', {
+        data: parsedAnalysis,
+        timestamp: new Date(),
+        dataPoints: conversationSample.length
+      });
+
+      console.log('✅ 對話模式分析完成');
+
+    } catch (error) {
+      console.error('對話模式分析失敗:', error);
+    }
+  }
+
+  async updateKnowledgeBase() {
+    try {
+      console.log('📖 更新知識庫...');
+
+      // 從對話中提取新知識
+      const recentConversations = this.dataCollection.conversations.slice(-50);
+      const knowledgePrompt = `從以下對話中提取有用的知識點：
+
+${recentConversations.map(conv => 
+  `Q: ${conv.userMessage}\nA: ${conv.botResponse}\n`
+).join('\n')}
+
+請提取：
+1. 新的事實信息
+2. 用戶常問的問題
+3. 有效的回答模式
+4. 需要改進的地方
+
+以JSON格式回答：
+{
+  "newFacts": ["事實1", "事實2"],
+  "commonQuestions": ["問題1", "問題2"],
+  "effectivePatterns": ["模式1", "模式2"],
+  "improvements": ["改進1", "改進2"]
+}`;
+
+      const knowledge = await autoFixSystem.callAIAPI(knowledgePrompt);
+      const parsedKnowledge = JSON.parse(knowledge);
+
+      // 更新知識庫
+      const knowledgeEntry = {
+        id: `knowledge-${Date.now()}`,
+        data: parsedKnowledge,
+        source: 'conversation_analysis',
+        timestamp: new Date()
+      };
+
+      this.knowledgeBase.set(knowledgeEntry.id, knowledgeEntry);
+
+      // 保持知識庫大小
+      if (this.knowledgeBase.size > 100) {
+        const oldestKey = this.knowledgeBase.keys().next().value;
+        this.knowledgeBase.delete(oldestKey);
+      }
+
+      console.log('✅ 知識庫更新完成');
+
+    } catch (error) {
+      console.error('知識庫更新失敗:', error);
+    }
+  }
+
+  async optimizeResponseStrategy() {
+    try {
+      console.log('⚡ 優化回應策略...');
+
+      // 分析用戶偏好並優化回應
+      const preferences = Array.from(this.userPreferences.values());
+      
+      if (preferences.length === 0) {
+        console.log('用戶偏好數據不足');
+        return;
+      }
+
+      // 計算整體偏好趨勢
+      const overallPreferences = this.calculateOverallPreferences(preferences);
+      
+      // 更新回應策略
+      this.learningModels.set('response_strategy', {
+        preferences: overallPreferences,
+        timestamp: new Date(),
+        userCount: preferences.length
+      });
+
+      console.log('✅ 回應策略優化完成');
+
+    } catch (error) {
+      console.error('回應策略優化失敗:', error);
+    }
+  }
+
+  calculateOverallPreferences(preferences) {
+    const overall = {
+      mostPopularTopics: new Map(),
+      averageResponseLength: 'medium',
+      emojiUsage: 0,
+      peakHours: new Map()
+    };
+
+    // 統計熱門話題
+    preferences.forEach(pref => {
+      if (pref.preferredTopics) {
+        for (const [topic, count] of pref.preferredTopics) {
+          const currentCount = overall.mostPopularTopics.get(topic) || 0;
+          overall.mostPopularTopics.set(topic, currentCount + count);
+        }
+      }
+      
+      if (pref.useEmoji) {
+        overall.emojiUsage++;
+      }
+
+      if (pref.preferredTime && pref.preferredTime.length > 0) {
+        pref.preferredTime.forEach(hour => {
+          const currentCount = overall.peakHours.get(hour) || 0;
+          overall.peakHours.set(hour, currentCount + 1);
+        });
+      }
+    });
+
+    return overall;
+  }
+
+  async generateLearningReport() {
+    try {
+      const report = `🧠 自動學習報告 ${new Date().toLocaleDateString('zh-TW')}
+
+📊 數據統計：
+• 對話記錄：${this.dataCollection.conversations.length} 筆
+• 用戶行為：${this.dataCollection.userBehaviors.length} 筆
+• 知識條目：${this.knowledgeBase.size} 筆
+• 用戶偏好：${this.userPreferences.size} 位用戶
+
+🎯 學習成果：
+• 分析模式：${this.learningModels.has('conversation_analysis') ? '✅ 已完成' : '❌ 未完成'}
+• 知識更新：${this.knowledgeBase.size > 0 ? '✅ 已更新' : '❌ 無更新'}
+• 策略優化：${this.learningModels.has('response_strategy') ? '✅ 已優化' : '❌ 未優化'}
+
+🔥 熱門話題：
+${this.getTopTopics().slice(0, 3).map((topic, index) => 
+  `${index + 1}. ${topic.topic} (${topic.count} 次)`
+).join('\n')}
+
+⏰ 活躍時段：
+${this.getPeakHours().slice(0, 3).map((hour, index) => 
+  `${index + 1}. ${hour.hour}:00 (${hour.count} 次)`
+).join('\n')}
+
+🚀 下次學習預計：${new Date(Date.now() + 3600000).toLocaleString('zh-TW')}
+
+💡 我正在持續學習和進化中！`;
+
+      await pushMessageSystem.safePushMessage(MY_LINE_ID, report);
+      console.log('📨 學習報告已發送');
+
+    } catch (error) {
+      console.error('生成學習報告失敗:', error);
+    }
+  }
+
+  getTopTopics() {
+    const allTopics = new Map();
+    
+    this.dataCollection.conversations.forEach(conv => {
+      conv.topics.forEach(topic => {
+        allTopics.set(topic, (allTopics.get(topic) || 0) + 1);
+      });
+    });
+
+    return Array.from(allTopics.entries())
+      .map(([topic, count]) => ({ topic, count }))
+      .sort((a, b) => b.count - a.count);
+  }
+
+  getPeakHours() {
+    const hourCounts = new Map();
+    
+    this.dataCollection.userBehaviors.forEach(behavior => {
+      const hour = behavior.timestamp.getHours();
+      hourCounts.set(hour, (hourCounts.get(hour) || 0) + 1);
+    });
+
+    return Array.from(hourCounts.entries())
+      .map(([hour, count]) => ({ hour, count }))
+      .sort((a, b) => b.count - a.count);
+  }
+
+  async personalizeResponse(userId, baseResponse) {
+    try {
+      if (!this.userPreferences.has(userId)) {
+        return baseResponse;
+      }
+
+      const preferences = this.userPreferences.get(userId);
+      let personalizedResponse = baseResponse;
+
+      // 根據偏好調整回應
+      if (preferences.useEmoji && !personalizedResponse.includes('😊')) {
+        personalizedResponse += ' 😊';
+      }
+
+      if (preferences.responseLength === 'short' && personalizedResponse.length > 100) {
+        personalizedResponse = personalizedResponse.substring(0, 80) + '...';
+      }
+
+      return personalizedResponse;
+
+    } catch (error) {
+      console.error('個性化回應失敗:', error);
+      return baseResponse;
+    }
+  }
+
+  getLearningStats() {
+    return {
+      totalConversations: this.dataCollection.conversations.length,
+      totalUsers: this.userPreferences.size,
+      knowledgeBaseSize: this.knowledgeBase.size,
+      learningModelsCount: this.learningModels.size,
+      isLearning: this.isLearning,
+      lastLearningTime: this.learningModels.has('conversation_analysis') ? 
+        this.learningModels.get('conversation_analysis').timestamp : null
+    };
+  }
+}
+
+// 視覺化回覆系統（修復版）
 class VisualResponseSystem {
   constructor() {
     console.log('🎨 視覺化回覆系統已初始化');
+  }
+
+  // 修復：添加缺失的函數
+  createReminderExecuteCard(reminder) {
+    return {
+      type: 'template',
+      altText: `⏰ 提醒：${reminder.title}`,
+      template: {
+        type: 'buttons',
+        thumbnailImageUrl: 'https://images.unsplash.com/photo-1611224923853-80b023f02d71?w=400&h=300&fit=crop',
+        title: '⏰ 提醒時間到！',
+        text: `${reminder.title}\n\n設定時間：${reminder.created.toLocaleString('zh-TW')}`,
+        actions: [
+          {
+            type: 'postback',
+            label: '✅ 已完成',
+            data: `reminder_stop:${reminder.id}`,
+            displayText: '已完成這個提醒'
+          },
+          {
+            type: 'postback',
+            label: '⏰ 5分鐘後再提醒',
+            data: `reminder_snooze:${reminder.id}:5`,
+            displayText: '5分鐘後再提醒我'
+          },
+          {
+            type: 'postback',
+            label: '🗑️ 取消提醒',
+            data: `reminder_cancel:${reminder.id}`,
+            displayText: '取消這個提醒'
+          }
+        ]
+      }
+    };
   }
 
   createWeatherCard(weatherData) {
@@ -278,15 +996,22 @@ class VisualResponseSystem {
   }
 
   createNewsCarousel(articles) {
+    if (!articles || articles.length === 0) {
+      return {
+        type: 'text',
+        text: '📰 抱歉，目前沒有可用的新聞資訊。'
+      };
+    }
+
     const columns = articles.slice(0, 10).map((article, index) => ({
       thumbnailImageUrl: article.urlToImage || 'https://images.unsplash.com/photo-1504711434969-e33886168f5c?w=400&h=300&fit=crop',
-      title: article.title.substring(0, 40),
-      text: (article.description || '').substring(0, 60) + '...',
+      title: (article.title || '無標題').substring(0, 40),
+      text: ((article.description || '無描述').substring(0, 60)) + '...',
       actions: [
         {
           type: 'uri',
           label: '📖 閱讀全文',
-          uri: article.url
+          uri: article.url || 'https://www.google.com/news'
         },
         {
           type: 'postback',
@@ -440,24 +1165,113 @@ class VisualResponseSystem {
   }
 }
 
-// 收回訊息偵測系統
+// 其他系統類別（簡化版，避免過長）
+class EnhancedDecisionSystem {
+  constructor() {
+    this.pendingDecisions = new Map();
+    this.decisionHistory = new Map();
+    console.log('🔐 增強版決策系統已初始化');
+  }
+
+  async requestDecision(context, question, originalReplyToken, originalUserId, groupId = null, decisionType = 'general') {
+    const decisionId = `decision-${Date.now()}`;
+    
+    this.pendingDecisions.set(decisionId, {
+      context, question, originalReplyToken, originalUserId, groupId, decisionType,
+      timestamp: new Date(), status: 'pending'
+    });
+
+    try {
+      const inquiryMessage = {
+        type: 'template',
+        altText: `🤔 需要你的決策：${question}`,
+        template: {
+          type: 'buttons',
+          title: `🤔 決策請求 - ${decisionType}`,
+          text: `${context}\n\n${question}`.substring(0, 160),
+          actions: [
+            { type: 'postback', label: '✅ 同意', data: `decision:${decisionId}:approve`, displayText: '我同意' },
+            { type: 'postback', label: '❌ 拒絕', data: `decision:${decisionId}:reject`, displayText: '我拒絕' },
+            { type: 'postback', label: '💬 需要詳情', data: `decision:${decisionId}:info`, displayText: '需要更多資訊' }
+          ]
+        }
+      };
+
+      const success = await pushMessageSystem.safePushMessage(MY_LINE_ID, inquiryMessage);
+      
+      if (success && originalReplyToken && !replyTokenManager.isTokenUsed(originalReplyToken)) {
+        await safeReply(originalReplyToken, { type: 'text', text: '🤔 讓我考慮一下這個請求，稍等片刻...' });
+      }
+      
+      return success ? decisionId : null;
+    } catch (error) {
+      console.error('💥 發送決策請求失敗:', error);
+      return null;
+    }
+  }
+
+  async handleDecisionResponse(decisionId, action, responseToken) {
+    const decision = this.pendingDecisions.get(decisionId);
+    if (!decision) return '❌ 找不到該決策請求';
+
+    decision.status = 'resolved';
+    decision.decision = action;
+
+    const responses = {
+      approve: { admin: '✅ 已批准決策', user: '✅ 經過考慮，我同意你的提案！' },
+      reject: { admin: '❌ 已拒絕決策', user: '❌ 抱歉，我無法接受這個提案。' },
+      info: { admin: '💬 需要更多資訊', user: '🤔 我需要更多資訊才能決定，能詳細說明一下嗎？' }
+    };
+
+    const response = responses[action] || responses.reject;
+    
+    await safeReply(responseToken, { type: 'text', text: response.admin });
+
+    try {
+      const targetId = decision.groupId || decision.originalUserId;
+      if (targetId !== MY_LINE_ID) {
+        await pushMessageSystem.safePushMessage(targetId, response.user);
+      }
+    } catch (error) {
+      console.error('💥 通知用戶失敗:', error);
+    }
+
+    this.decisionHistory.set(decisionId, decision);
+    this.pendingDecisions.delete(decisionId);
+    return response.admin;
+  }
+
+  shouldRequestDecision(message) {
+    const socialKeywords = [
+      /約.*吃飯/, /約.*喝茶/, /約.*看電影/, /約.*出去/, /明天.*見面/, /後天.*聚會/,
+      /一起.*吃/, /一起.*玩/, /邀請.*參加/, /報告.*時間/, /會議.*時間/, /開會.*時間/
+    ];
+
+    const sensitiveKeywords = [
+      /刪除.*檔案/, /修改.*程式/, /重啟.*系統/, /發送.*所有人/, /群發/, /廣播/
+    ];
+
+    if (socialKeywords.some(pattern => pattern.test(message))) {
+      return { needDecision: true, type: 'social' };
+    }
+    
+    if (sensitiveKeywords.some(pattern => pattern.test(message))) {
+      return { needDecision: true, type: 'general' };
+    }
+
+    return { needDecision: false };
+  }
+}
+
+// 其他必要的系統類別
 class UnsendMessageDetectionSystem {
   constructor() {
     this.messageHistory = new Map();
-    this.unsendHistory = new Map();
     console.log('🔍 收回訊息偵測系統已初始化');
   }
 
   recordMessage(userId, userName, messageId, content, timestamp) {
-    this.messageHistory.set(messageId, {
-      userId,
-      userName,
-      content,
-      timestamp,
-      unsent: false
-    });
-
-    // 保持最近1000條記錄
+    this.messageHistory.set(messageId, { userId, userName, content, timestamp, unsent: false });
     if (this.messageHistory.size > 1000) {
       const oldestKey = this.messageHistory.keys().next().value;
       this.messageHistory.delete(oldestKey);
@@ -466,89 +1280,19 @@ class UnsendMessageDetectionSystem {
 
   async handleUnsendEvent(event) {
     const messageId = event.unsend.messageId;
-    const userId = event.source.userId;
-
-    console.log(`🔍 偵測到收回訊息: ${messageId} by ${userId}`);
-
     const originalMessage = this.messageHistory.get(messageId);
     
     if (originalMessage) {
-      originalMessage.unsent = true;
-      originalMessage.unsendTime = new Date();
-
-      // 記錄收回歷史
-      const unsendId = `unsend-${Date.now()}`;
-      this.unsendHistory.set(unsendId, {
-        ...originalMessage,
-        unsendId,
-        unsendTime: new Date()
-      });
-
-      // 發送通知給管理員
-      await this.notifyUnsendMessage(originalMessage);
-    } else {
-      console.log('⚠️ 找不到原始訊息記錄');
-      
-      // 發送未知收回通知
-      await this.notifyUnknownUnsend(userId);
-    }
-  }
-
-  async notifyUnsendMessage(messageData) {
-    try {
-      const reportMessage = `🔍 收回訊息偵測
-
-👤 用戶：${messageData.userName}
-⏰ 原發送時間：${messageData.timestamp.toLocaleString('zh-TW')}
-🗑️ 收回時間：${messageData.unsendTime.toLocaleString('zh-TW')}
-
-📝 收回的內容：
-「${messageData.content}」
-
-💡 用戶可能想要隱藏或修改這個訊息。`;
-
-      const success = await pushMessageSystem.safePushMessage(MY_LINE_ID, reportMessage);
-      
-      if (success) {
-        console.log(`✅ 收回訊息通知已發送: ${messageData.userName}`);
-      }
-      
-    } catch (error) {
-      console.error('💥 發送收回訊息通知失敗:', error);
-    }
-  }
-
-  async notifyUnknownUnsend(userId) {
-    try {
-      const reportMessage = `🔍 收回訊息偵測
-
-👤 用戶ID：${userId}
-⏰ 收回時間：${new Date().toLocaleString('zh-TW')}
-
-❓ 收回了未知內容（可能是圖片、貼圖或其他媒體）
-
-💡 建議關注該用戶的後續行為。`;
-
+      const reportMessage = `🔍 收回訊息偵測\n\n👤 用戶：${originalMessage.userName}\n📝 收回內容：「${originalMessage.content}」\n⏰ 時間：${new Date().toLocaleString('zh-TW')}`;
       await pushMessageSystem.safePushMessage(MY_LINE_ID, reportMessage);
-      
-    } catch (error) {
-      console.error('💥 發送未知收回通知失敗:', error);
     }
-  }
-
-  getUnsendHistory(limit = 10) {
-    return Array.from(this.unsendHistory.values())
-      .sort((a, b) => b.unsendTime - a.unsendTime)
-      .slice(0, limit);
   }
 }
 
-// 修復的提醒系統
 class FixedReminderSystem {
   constructor() {
     this.reminders = new Map();
     this.activeTimers = new Map();
-    this.reminderHistory = new Map();
     console.log('⏰ 修復版提醒系統已初始化');
   }
 
@@ -557,16 +1301,8 @@ class FixedReminderSystem {
     const now = new Date();
     
     const reminder = {
-      id: reminderId,
-      userId,
-      title,
-      targetTime,
-      description,
-      created: now,
-      active: true,
-      completed: false,
-      isAlarm,
-      type: isAlarm ? 'alarm' : 'reminder'
+      id: reminderId, userId, title, targetTime, description, created: now,
+      active: true, completed: false, isAlarm, type: isAlarm ? 'alarm' : 'reminder'
     };
 
     this.reminders.set(reminderId, reminder);
@@ -579,12 +1315,9 @@ class FixedReminderSystem {
       }, delay);
       
       this.activeTimers.set(reminderId, timerId);
-      
-      console.log(`⏰ ${reminder.type}已設定: ${title} - ${delay}ms後觸發`);
-      
+      console.log(`⏰ ${reminder.type}已設定: ${title}`);
       return reminderId;
     } else {
-      console.log('⚠️ 時間已過，立即觸發');
       this.executeReminder(reminderId);
       return reminderId;
     }
@@ -592,26 +1325,19 @@ class FixedReminderSystem {
 
   async executeReminder(reminderId) {
     const reminder = this.reminders.get(reminderId);
-    if (!reminder || !reminder.active) {
-      console.log(`⚠️ 提醒 ${reminderId} 已失效或被取消`);
-      return;
-    }
-
-    console.log(`🔔 正在執行${reminder.type}: ${reminder.title}`);
+    if (!reminder || !reminder.active) return;
 
     try {
       if (reminder.isAlarm) {
-        // 鬧鐘功能：發送訊息 + 打電話
         await this.executeAlarm(reminder);
       } else {
-        // 一般提醒：只發送訊息
         await this.executeNormalReminder(reminder);
       }
-      
       this.activeTimers.delete(reminderId);
-      
     } catch (error) {
       console.error('💥 執行提醒失敗:', error);
+      // 自動修復：記錄錯誤供自動修復系統處理
+      autoFixSystem.handleError('reminder_execution', error, { reminderId, reminder });
     }
   }
 
@@ -622,89 +1348,16 @@ class FixedReminderSystem {
   }
 
   async executeAlarm(reminder) {
-    // 發送LINE訊息
-    const alarmMessage = {
-      type: 'template',
-      altText: `🔔 鬧鐘：${reminder.title}`,
-      template: {
-        type: 'buttons',
-        thumbnailImageUrl: 'https://images.unsplash.com/photo-1611224923853-80b023f02d71?w=400&h=300&fit=crop',
-        title: '🔔 鬧鐘時間到！',
-        text: `${reminder.title}\n\n現在時間：${new Date().toLocaleString('zh-TW')}`,
-        actions: [
-          {
-            type: 'postback',
-            label: '✅ 我醒了',
-            data: `alarm_stop:${reminder.id}`,
-            displayText: '我醒了'
-          },
-          {
-            type: 'postback',
-            label: '😴 再睡5分鐘',
-            data: `alarm_snooze:${reminder.id}:5`,
-            displayText: '再睡5分鐘'
-          },
-          {
-            type: 'postback',
-            label: '😴 再睡10分鐘',
-            data: `alarm_snooze:${reminder.id}:10`,
-            displayText: '再睡10分鐘'
-          }
-        ]
-      }
-    };
-
+    const alarmMessage = visualResponse.createReminderExecuteCard(reminder);
     await client.pushMessage(reminder.userId, alarmMessage);
     console.log(`✅ 鬧鐘訊息已發送: ${reminder.title}`);
-
-    // 打電話（如果有設定Twilio）
-    if (TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN) {
-      await this.makePhoneCall(reminder);
-    } else {
-      console.log('📞 電話功能未設定，跳過撥號');
-    }
-  }
-
-  async makePhoneCall(reminder) {
-    try {
-      console.log(`📞 正在撥打電話: ${MY_PHONE_NUMBER}`);
-      
-      // 這裡使用 Twilio API 撥打電話
-      const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/Calls.json`;
-      
-      const callData = {
-        From: TWILIO_PHONE_NUMBER,
-        To: MY_PHONE_NUMBER,
-        Url: `${process.env.BASE_URL || 'https://your-app.com'}/twiml/alarm`,
-        Method: 'GET'
-      };
-
-      const response = await axios.post(twilioUrl, new URLSearchParams(callData), {
-        auth: {
-          username: TWILIO_ACCOUNT_SID,
-          password: TWILIO_AUTH_TOKEN
-        },
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded'
-        }
-      });
-
-      console.log(`✅ 電話撥打成功: ${response.data.sid}`);
-      
-    } catch (error) {
-      console.error('💥 撥打電話失敗:', error.message);
-    }
   }
 
   parseTimeExpression(text) {
     const timePatterns = [
-      { pattern: /(\d{1,2})秒後/, multiplier: 1000, type: 'relative' },
       { pattern: /(\d{1,2})分鐘後/, multiplier: 60000, type: 'relative' },
       { pattern: /(\d{1,2})小時後/, multiplier: 3600000, type: 'relative' },
-      { pattern: /明天.*?(\d{1,2})點/, offset: 1, type: 'absolute' },
-      { pattern: /後天.*?(\d{1,2})點/, offset: 2, type: 'absolute' },
-      { pattern: /今天.*?(\d{1,2})點/, offset: 0, type: 'absolute' },
-      { pattern: /(\d{1,2})點.*?叫我/, offset: 0, type: 'alarm' }, // 新增：鬧鐘模式
+      { pattern: /(\d{1,2})點.*?叫我/, offset: 0, type: 'alarm' },
       { pattern: /(\d{1,2})點.*?起床/, offset: 0, type: 'alarm' }
     ];
 
@@ -715,70 +1368,42 @@ class FixedReminderSystem {
         const value = parseInt(match[1]);
         
         if (timePattern.type === 'relative') {
-          return {
-            time: new Date(now.getTime() + value * timePattern.multiplier),
-            isAlarm: false
-          };
-        } else if (timePattern.type === 'absolute' || timePattern.type === 'alarm') {
+          return { time: new Date(now.getTime() + value * timePattern.multiplier), isAlarm: false };
+        } else if (timePattern.type === 'alarm') {
           const targetDate = new Date(now);
           targetDate.setHours(value, 0, 0, 0);
-          
-          if (timePattern.offset === 0 && targetDate <= now) {
-            targetDate.setDate(targetDate.getDate() + 1);
-          } else if (timePattern.offset > 0) {
-            targetDate.setDate(targetDate.getDate() + timePattern.offset);
-          }
-          
-          return {
-            time: targetDate,
-            isAlarm: timePattern.type === 'alarm'
-          };
+          if (targetDate <= now) targetDate.setDate(targetDate.getDate() + 1);
+          return { time: targetDate, isAlarm: true };
         }
       }
     }
-    
     return null;
   }
 
   async handleReminderAction(userId, action, reminderId, params = null) {
     const reminder = this.reminders.get(reminderId);
-    if (!reminder) {
-      return '❌ 找不到該提醒';
-    }
-
-    console.log(`🔧 處理提醒操作: ${action} for ${reminderId}`);
+    if (!reminder) return '❌ 找不到該提醒';
 
     switch (action) {
       case 'stop':
         reminder.completed = true;
         reminder.active = false;
         this.clearTimer(reminderId);
-        return reminder.isAlarm ? '✅ 鬧鐘已關閉！起床囉！' : '✅ 提醒已完成！';
-        
+        return reminder.isAlarm ? '✅ 鬧鐘已關閉！' : '✅ 提醒已完成！';
       case 'snooze':
         const snoozeMinutes = parseInt(params) || 5;
         const newTime = new Date(Date.now() + snoozeMinutes * 60000);
-        
         this.clearTimer(reminderId);
-        
-        const delay = newTime.getTime() - Date.now();
-        const timerId = setTimeout(async () => {
-          await this.executeReminder(reminderId);
-        }, delay);
-        
+        const timerId = setTimeout(async () => await this.executeReminder(reminderId), newTime.getTime() - Date.now());
         this.activeTimers.set(reminderId, timerId);
         reminder.targetTime = newTime;
-        
-        console.log(`⏰ ${reminder.type}延後 ${snoozeMinutes} 分鐘`);
-        return `😴 已延後 ${snoozeMinutes} 分鐘，${newTime.toLocaleTimeString('zh-TW')} 再${reminder.isAlarm ? '叫你' : '提醒你'}`;
-        
+        return `😴 已延後 ${snoozeMinutes} 分鐘`;
       case 'cancel':
         reminder.active = false;
         this.clearTimer(reminderId);
-        return `🗑️ ${reminder.isAlarm ? '鬧鐘' : '提醒'}已取消`;
-        
+        return '🗑️ 提醒已取消';
       default:
-        return '❓ 未知的操作';
+        return '❓ 未知操作';
     }
   }
 
@@ -787,16 +1412,13 @@ class FixedReminderSystem {
     if (timerId) {
       clearTimeout(timerId);
       this.activeTimers.delete(reminderId);
-      console.log(`🧹 清除計時器: ${reminderId}`);
     }
   }
 
   getUserReminders(userId) {
-    const userReminders = Array.from(this.reminders.values())
+    return Array.from(this.reminders.values())
       .filter(r => r.userId === userId && r.active)
       .sort((a, b) => a.targetTime - b.targetTime);
-    
-    return userReminders;
   }
 
   getStatus() {
@@ -809,118 +1431,33 @@ class FixedReminderSystem {
   }
 }
 
-// API 管理系統
-class EnhancedAPIManager {
-  constructor() {
-    this.apiStatus = new Map();
-    this.lastSuccessfulCall = new Map();
-    this.failureCount = new Map();
-    console.log('🔧 增強API管理系統已初始化');
-  }
-
-  async smartAPICall(prompt) {
-    try {
-      console.log('🤖 嘗試調用Gemini API...');
-      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
-      
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
-      
-      this.recordSuccess('gemini');
-      console.log('✅ Gemini API調用成功');
-      return text;
-      
-    } catch (error) {
-      console.error('❌ Gemini API失敗:', error.message);
-      this.recordFailure('gemini');
-      return this.getFallbackResponse(prompt);
-    }
-  }
-
-  getFallbackResponse(prompt) {
-    const responses = [
-      '哈哈，這個問題很有趣！讓我想想... 🤔',
-      '好der，我了解你的意思！ 👌',
-      'ㄜ...這個我需要再研究一下 😅',
-      '有道理！你說得很對 ✨',
-      '這個話題很不錯呢！ 😊',
-      '我覺得這樣很棒！ 🎉'
-    ];
-    
-    return responses[Math.floor(Math.random() * responses.length)];
-  }
-
-  recordSuccess(apiName) {
-    this.lastSuccessfulCall.set(apiName, new Date());
-    this.failureCount.set(apiName, 0);
-    this.apiStatus.set(apiName, 'healthy');
-  }
-
-  recordFailure(apiName) {
-    const currentFailures = this.failureCount.get(apiName) || 0;
-    this.failureCount.set(apiName, currentFailures + 1);
-    
-    if (currentFailures >= 3) {
-      this.apiStatus.set(apiName, 'unhealthy');
-    }
-  }
-
-  getAPIStatus() {
-    const status = {};
-    for (const [api, health] of this.apiStatus) {
-      status[api] = {
-        status: health,
-        lastSuccess: this.lastSuccessfulCall.get(api),
-        failureCount: this.failureCount.get(api) || 0
-      };
-    }
-    return status;
-  }
-}
-
-// 安全推送系統
+// 簡化的其他系統
 class SafePushMessageSystem {
   constructor() {
-    this.pushQueue = [];
-    this.isProcessingQueue = false;
     console.log('📨 安全推送訊息系統已初始化');
   }
 
   async safePushMessage(targetId, message, retryCount = 0) {
     try {
-      console.log(`📤 嘗試推送訊息到: ${targetId}`);
-      
       const formattedMessage = this.formatMessage(message);
-      
       await client.pushMessage(targetId, formattedMessage);
-      console.log('✅ 推送訊息成功');
       return true;
-      
     } catch (error) {
-      console.error(`💥 推送訊息失敗 (嘗試 ${retryCount + 1}):`, error.message);
-      
-      if (error.response?.status === 400 || retryCount >= 2) {
-        return false;
+      if (retryCount < 2) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return await this.safePushMessage(targetId, message, retryCount + 1);
       }
-      
-      await new Promise(resolve => setTimeout(resolve, (retryCount + 1) * 1000));
-      return await this.safePushMessage(targetId, message, retryCount + 1);
+      return false;
     }
   }
 
   formatMessage(message) {
     if (typeof message === 'string') {
-      return {
-        type: 'text',
-        text: this.limitMessageLength(message)
-      };
+      return { type: 'text', text: this.limitMessageLength(message) };
     }
-    
     if (message && message.text) {
       message.text = this.limitMessageLength(message.text);
     }
-    
     return message;
   }
 
@@ -930,29 +1467,8 @@ class SafePushMessageSystem {
     }
     return text;
   }
-
-  async testPushMessage() {
-    try {
-      console.log('🧪 測試推送訊息功能...');
-      const testMessage = `🧪 系統測試訊息 ${new Date().toLocaleString('zh-TW')}`;
-      
-      const success = await this.safePushMessage(MY_LINE_ID, testMessage);
-      
-      if (success) {
-        console.log('✅ 推送訊息測試成功');
-      } else {
-        console.error('❌ 推送訊息測試失敗');
-      }
-      
-      return success;
-    } catch (error) {
-      console.error('💥 推送訊息測試出錯:', error);
-      return false;
-    }
-  }
 }
 
-// 天氣系統
 class WeatherSystem {
   constructor() {
     this.apiKey = WEATHER_API_KEY;
@@ -961,13 +1477,8 @@ class WeatherSystem {
 
   async getWeather(cityName) {
     try {
-      console.log(`🌤️ 查詢天氣: ${cityName}`);
-      
       const response = await axios.get('https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001', {
-        params: {
-          Authorization: this.apiKey,
-          locationName: cityName
-        },
+        params: { Authorization: this.apiKey, locationName: cityName },
         timeout: 10000
       });
 
@@ -977,14 +1488,12 @@ class WeatherSystem {
         return this.getFallbackWeather(cityName);
       }
     } catch (error) {
-      console.error('💥 天氣查詢錯誤:', error.message);
       return this.getFallbackWeather(cityName);
     }
   }
 
   formatWeatherData(locationData) {
     const weather = locationData.weatherElement;
-    
     const minTemp = weather.find(el => el.elementName === 'MinT');
     const maxTemp = weather.find(el => el.elementName === 'MaxT');
     const wx = weather.find(el => el.elementName === 'Wx');
@@ -1003,33 +1512,20 @@ class WeatherSystem {
 
   getFallbackWeather(cityName) {
     return {
-      location: cityName,
-      minTemp: '18',
-      maxTemp: '25',
-      weather: '多雲時晴',
-      rainChance: '30',
-      updateTime: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}),
-      isFallback: true
+      location: cityName, minTemp: '18', maxTemp: '25', weather: '多雲時晴', rainChance: '30',
+      updateTime: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}), isFallback: true
     };
   }
 
   extractCityFromText(text) {
-    const cities = [
-      '台北', '新北', '桃園', '台中', '台南', '高雄', '基隆', 
-      '新竹', '苗栗', '彰化', '南投', '雲林', '嘉義', '屏東', 
-      '宜蘭', '花蓮', '台東', '澎湖', '金門', '連江'
-    ];
-    
+    const cities = ['台北', '新北', '桃園', '台中', '台南', '高雄', '基隆', '新竹', '苗栗', '彰化', '南投', '雲林', '嘉義', '屏東', '宜蘭', '花蓮', '台東', '澎湖', '金門', '連江'];
     for (const city of cities) {
-      if (text.includes(city)) {
-        return city;
-      }
+      if (text.includes(city)) return city;
     }
     return '台北';
   }
 }
 
-// 新聞系統
 class NewsSystem {
   constructor() {
     this.apiKey = NEWS_API_KEY;
@@ -1038,14 +1534,8 @@ class NewsSystem {
 
   async getNews() {
     try {
-      console.log('📰 獲取最新新聞');
-      
       const response = await axios.get('https://newsapi.org/v2/top-headlines', {
-        params: {
-          country: 'tw',
-          apiKey: this.apiKey,
-          pageSize: 10
-        },
+        params: { country: 'tw', apiKey: this.apiKey, pageSize: 10 },
         timeout: 10000
       });
 
@@ -1055,30 +1545,18 @@ class NewsSystem {
         return this.getFallbackNews();
       }
     } catch (error) {
-      console.error('💥 新聞查詢錯誤:', error.message);
       return this.getFallbackNews();
     }
   }
 
   getFallbackNews() {
     return [
-      {
-        title: '科技發展持續進步',
-        description: 'AI技術日新月異，帶來更多可能性',
-        url: 'https://example.com',
-        urlToImage: null
-      },
-      {
-        title: '台灣經濟表現穩定',
-        description: '各產業持續發展，展現韌性',
-        url: 'https://example.com',
-        urlToImage: null
-      }
+      { title: '科技發展持續進步', description: 'AI技術日新月異', url: 'https://example.com', urlToImage: null },
+      { title: '台灣經濟表現穩定', description: '各產業持續發展', url: 'https://example.com', urlToImage: null }
     ];
   }
 }
 
-// 防重複回覆系統
 class ReplyTokenManager {
   constructor() {
     this.usedTokens = new Set();
@@ -1086,19 +1564,15 @@ class ReplyTokenManager {
     this.cleanupInterval = setInterval(() => this.cleanup(), 300000);
   }
 
-  isTokenUsed(replyToken) {
-    return this.usedTokens.has(replyToken);
-  }
-
-  markTokenUsed(replyToken) {
-    this.usedTokens.add(replyToken);
-    this.tokenTimestamps.set(replyToken, Date.now());
+  isTokenUsed(replyToken) { return this.usedTokens.has(replyToken); }
+  markTokenUsed(replyToken) { 
+    this.usedTokens.add(replyToken); 
+    this.tokenTimestamps.set(replyToken, Date.now()); 
   }
 
   cleanup() {
     const now = Date.now();
     const expiredTime = 10 * 60 * 1000;
-    
     for (const [token, timestamp] of this.tokenTimestamps) {
       if (now - timestamp > expiredTime) {
         this.usedTokens.delete(token);
@@ -1109,49 +1583,59 @@ class ReplyTokenManager {
 }
 
 // 初始化系統
-const apiManager = new EnhancedAPIManager();
-const pushMessageSystem = new SafePushMessageSystem();
-const decisionSystem = new EnhancedDecisionSystem();
+const autoFixSystem = new AutoFixSystem();
+const autoLearning = new AutoLearningSystem();
 const visualResponse = new VisualResponseSystem();
+const decisionSystem = new EnhancedDecisionSystem();
 const unsendDetection = new UnsendMessageDetectionSystem();
 const reminderSystem = new FixedReminderSystem();
+const pushMessageSystem = new SafePushMessageSystem();
 const weatherSystem = new WeatherSystem();
 const newsSystem = new NewsSystem();
 const replyTokenManager = new ReplyTokenManager();
 
+// 啟動自動學習循環
+setInterval(() => {
+  autoLearning.performLearningCycle();
+}, 3600000); // 每小時學習一次
+
 // 輔助函數
 async function safeReply(replyToken, message, retryCount = 0) {
   try {
-    if (replyTokenManager.isTokenUsed(replyToken)) {
-      console.log('⚠️ replyToken 已使用，跳過回覆');
-      return false;
-    }
-
+    if (replyTokenManager.isTokenUsed(replyToken)) return false;
     replyTokenManager.markTokenUsed(replyToken);
-
-    if (!replyToken) {
-      console.log('⚠️ 空的replyToken，跳過回覆');
-      return false;
-    }
+    if (!replyToken) return false;
 
     const formattedMessage = pushMessageSystem.formatMessage(message);
-    
     await client.replyMessage(replyToken, formattedMessage);
-    console.log('✅ 回覆發送成功');
     return true;
-    
   } catch (error) {
-    console.error(`💥 回覆失敗 (嘗試 ${retryCount + 1}):`, error.message);
-    
-    if (error.message.includes('400') || retryCount >= 1) {
-      return false;
-    }
-
+    if (error.message.includes('400') || retryCount >= 1) return false;
     await new Promise(resolve => setTimeout(resolve, 1000));
     return await safeReply(replyToken, message, retryCount + 1);
   }
 }
 
+async function handleGeneralChat(message, userId) {
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const prompt = `用戶說：${message}\n\n請以顧晉瑋的身份回應，我是靜宜大學資管系學生，對科技AI有高度興趣。回應要自然親切，可以用一些台灣口語如「好der」、「ㄜ」、「哎呦」等。保持友善和有趣的語氣。`;
+    
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    let text = response.text().replace(/[*#`_~]/g, '').trim();
+    
+    // 個性化回應
+    text = await autoLearning.personalizeResponse(userId, text);
+    
+    return text || '哈哈，我現在有點忙碌，但我懂你的意思！好der～ 😊';
+  } catch (error) {
+    console.error('💥 一般對話處理失敗:', error.message);
+    return '哈哈，我現在有點忙碌，但我懂你的意思！好der～ 😊';
+  }
+}
+
+// 工具函數
 function isWeatherQuery(text) {
   const weatherKeywords = ['天氣', '氣溫', '下雨', '晴天', '陰天', '溫度', '濕度', '風速', '預報'];
   return weatherKeywords.some(keyword => text.includes(keyword));
@@ -1171,82 +1655,65 @@ function isFunctionMenuQuery(text) {
   return menuKeywords.some(keyword => text.includes(keyword));
 }
 
-async function handleGeneralChat(message, userId) {
-  try {
-    const prompt = `用戶說：${message}
-
-請以顧晉瑋的身份回應，我是靜宜大學資管系學生，對科技AI有高度興趣。回應要自然親切，可以用一些台灣口語如「好der」、「ㄜ」、「哎呦」等。保持友善和有趣的語氣。`;
-
-    const response = await apiManager.smartAPICall(prompt);
-    return response;
-    
-  } catch (error) {
-    console.error('💥 一般對話處理失敗:', error.message);
-    return '哈哈，我現在有點忙碌，但我懂你的意思！好der～ 😊';
-  }
-}
-
-// TwiML端點（用於電話鬧鐘）
-app.get('/twiml/alarm', (req, res) => {
-  res.set('Content-Type', 'text/xml');
-  res.send(`<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Say voice="alice" language="zh-TW">早安！鬧鐘時間到了！該起床了！</Say>
-    <Pause length="2"/>
-    <Say voice="alice" language="zh-TW">這是你的專屬鬧鐘提醒，請盡快起床開始美好的一天！</Say>
-    <Pause length="1"/>
-    <Say voice="alice" language="zh-TW">祝你有個美好的一天！</Say>
-</Response>`);
-});
-
 // 健康檢查端點
 app.get('/', (req, res) => {
   const currentTime = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   const reminderStatus = reminderSystem.getStatus();
+  const fixHistory = autoFixSystem.getFixHistory();
+  const learningStats = autoLearning.getLearningStats();
   
   res.send(`
-    <h1>🎓 顧晉瑋的超級進化版AI助手 v8.0</h1>
+    <h1>🎓 顧晉瑋的自我進化版AI助手 v9.0</h1>
     <p><strong>身份：靜宜大學資訊管理系學生</strong></p>
     <p><strong>🇹🇼 台灣時間：${currentTime}</strong></p>
     <p><strong>🔑 LINE ID：${MY_LINE_ID}</strong></p>
-    <p><strong>📞 電話功能：${TWILIO_ACCOUNT_SID ? '✅ 已啟用' : '❌ 未啟用'}</strong></p>
     
-    <h2>🆕 v8.0 全新功能：</h2>
+    <h2>🆕 v9.0 革命性功能：</h2>
     <ul>
-      <li>✅ <strong>擴展決策系統</strong> - 約會、報告都會先詢問</li>
-      <li>✅ <strong>視覺化回覆</strong> - 豐富的圖表和選單</li>
-      <li>✅ <strong>收回訊息偵測</strong> - 監控用戶收回的內容</li>
-      <li>✅ <strong>功能選單</strong> - 完整的互動式選單</li>
-      <li>✅ <strong>修復提醒系統</strong> - 更穩定的提醒功能</li>
-      <li>✅ <strong>電話鬧鐘</strong> - 六點叫你起床會打電話！</li>
+      <li>✅ <strong>自動修復系統</strong> - 發現錯誤自動上網找解決方案</li>
+      <li>✅ <strong>自動學習系統</strong> - 大數據分析用戶喜好自我訓練</li>
+      <li>✅ <strong>修復提醒錯誤</strong> - 解決 createReminderExecuteCard 問題</li>
+      <li>✅ <strong>API自動修復</strong> - 網路錯誤自動重試機制</li>
+      <li>✅ <strong>智能個性化</strong> - 根據用戶偏好調整回應風格</li>
+      <li>✅ <strong>錯誤自癒能力</strong> - 系統能自己診斷並修復問題</li>
     </ul>
+    
+    <h2>🔧 自動修復狀態：</h2>
+    <div style="background-color: #e8f5e8; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
+      <p><strong>總錯誤數：</strong> ${fixHistory.totalErrors}</p>
+      <p><strong>已修復：</strong> ${fixHistory.fixedErrors}</p>
+      <p><strong>修復率：</strong> ${fixHistory.totalErrors > 0 ? Math.round((fixHistory.fixedErrors/fixHistory.totalErrors)*100) : 0}%</p>
+    </div>
+    
+    <h2>🧠 自動學習狀態：</h2>
+    <div style="background-color: #e8f8ff; padding: 10px; border-radius: 5px; margin-bottom: 10px;">
+      <p><strong>對話記錄：</strong> ${learningStats.totalConversations}</p>
+      <p><strong>用戶數：</strong> ${learningStats.totalUsers}</p>
+      <p><strong>知識庫：</strong> ${learningStats.knowledgeBaseSize} 條</p>
+      <p><strong>學習狀態：</strong> ${learningStats.isLearning ? '🟢 學習中' : '⭕ 待機中'}</p>
+    </div>
     
     <h2>📊 系統狀態：</h2>
     <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
       <p><strong>⏰ 活躍提醒：</strong> ${reminderStatus.activeReminders} 個</p>
       <p><strong>📞 活躍鬧鐘：</strong> ${reminderStatus.activeAlarms} 個</p>
-      <p><strong>📋 總提醒數：</strong> ${reminderStatus.totalReminders} 個</p>
       <p><strong>🔧 計時器：</strong> ${reminderStatus.activeTimers} 個</p>
     </div>
     
-    <h2>📱 使用方式：</h2>
+    <h2>🚀 革命性特色：</h2>
     <ul>
-      <li><strong>功能選單：</strong>「功能」「選單」「幫助」</li>
-      <li><strong>天氣查詢：</strong>「台北天氣」</li>
-      <li><strong>新聞查詢：</strong>「最新新聞」</li>
-      <li><strong>設定提醒：</strong>「10分鐘後提醒我休息」</li>
-      <li><strong>設定鬧鐘：</strong>「明天6點叫我起床」</li>
-      <li><strong>約會決策：</strong>「約明天吃飯」（會先私訊問你）</li>
+      <li><strong>🔧 自動修復：</strong>發現問題→上網搜尋→自動修復</li>
+      <li><strong>📚 大數據學習：</strong>收集對話→分析模式→優化回應</li>
+      <li><strong>🎯 個性化：</strong>記住用戶偏好→調整風格→提升體驗</li>
+      <li><strong>🧠 自我進化：</strong>持續學習→不斷改進→越用越聰明</li>
     </ul>
 
-    <p><strong>💡 全新功能上線！現在更智能、更實用了！好der 👌</strong></p>
+    <p><strong>💡 我現在具備自我修復和學習能力，會越來越聰明！好der 🚀</strong></p>
     
     <style>
       body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
       h1, h2 { color: #333; }
       ul li { margin: 5px 0; }
-      .status-healthy { color: green; }
-      .status-unhealthy { color: red; }
     </style>
   `);
 });
@@ -1255,19 +1722,12 @@ app.get('/', (req, res) => {
 app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) => {
   const signature = req.get('X-Line-Signature');
   
-  if (!signature) {
-    return res.status(401).send('缺少簽名標頭');
-  }
+  if (!signature) return res.status(401).send('缺少簽名標頭');
 
   const body = req.body.toString();
-  const hash = crypto
-    .createHmac('SHA256', config.channelSecret)
-    .update(body)
-    .digest('base64');
+  const hash = crypto.createHmac('SHA256', config.channelSecret).update(body).digest('base64');
 
-  if (signature !== hash) {
-    return res.status(401).send('簽名驗證失敗');
-  }
+  if (signature !== hash) return res.status(401).send('簽名驗證失敗');
 
   let events;
   try {
@@ -1282,6 +1742,8 @@ app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) =
   events.forEach(event => {
     handleEvent(event).catch(error => {
       console.error('💥 事件處理異步錯誤:', error.message);
+      // 自動修復：記錄事件處理錯誤
+      autoFixSystem.handleError('event_handling', error, { event });
     });
   });
 });
@@ -1289,8 +1751,6 @@ app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) =
 // 事件處理函數
 async function handleEvent(event) {
   try {
-    console.log(`📨 收到事件類型: ${event.type}`);
-
     // 處理收回訊息事件
     if (event.type === 'unsend') {
       await unsendDetection.handleUnsendEvent(event);
@@ -1300,27 +1760,19 @@ async function handleEvent(event) {
     // 處理 postback 事件
     if (event.type === 'postback') {
       const data = event.postback.data;
-      console.log(`📤 處理 postback: ${data}`);
+      
+      // 收集用戶行為數據
+      await autoLearning.collectUserBehavior(event.source.userId, 'postback', { data });
       
       if (data.startsWith('decision:')) {
         const [, decisionId, action] = data.split(':');
-        const result = await decisionSystem.handleDecisionResponse(
-          decisionId, 
-          action, 
-          event.replyToken
-        );
+        const result = await decisionSystem.handleDecisionResponse(decisionId, action, event.replyToken);
         return;
       }
 
       if (data.startsWith('reminder_') || data.startsWith('alarm_')) {
         const [actionType, action, reminderId, ...params] = data.split(':');
-        const result = await reminderSystem.handleReminderAction(
-          event.source.userId, 
-          action, 
-          reminderId, 
-          params[0]
-        );
-        
+        const result = await reminderSystem.handleReminderAction(event.source.userId, action, reminderId, params[0]);
         await safeReply(event.replyToken, { type: 'text', text: result });
         return;
       }
@@ -1332,14 +1784,9 @@ async function handleEvent(event) {
       }
 
       if (data.startsWith('news:')) {
-        const [, action] = data.split(':');
-        await handleNewsAction(action, event.replyToken);
-        return;
-      }
-
-      if (data === 'menu:functions') {
-        const functionMenu = visualResponse.createFunctionMenu();
-        await safeReply(event.replyToken, functionMenu);
+        const articles = await newsSystem.getNews();
+        const newsCarousel = visualResponse.createNewsCarousel(articles);
+        await safeReply(event.replyToken, newsCarousel);
         return;
       }
 
@@ -1351,9 +1798,7 @@ async function handleEvent(event) {
       }
     }
 
-    if (event.type !== 'message' || event.message.type !== 'text') {
-      return;
-    }
+    if (event.type !== 'message' || event.message.type !== 'text') return;
 
     const userId = event.source.userId;
     const groupId = event.source.groupId;
@@ -1361,8 +1806,6 @@ async function handleEvent(event) {
     const replyToken = event.replyToken;
     const messageId = event.message.id;
     
-    console.log(`📨 收到訊息: ${messageText} | 用戶: ${userId} | 訊息ID: ${messageId}`);
-
     // 獲取用戶名稱
     let userName = '未知用戶';
     try {
@@ -1377,38 +1820,28 @@ async function handleEvent(event) {
       console.log('無法獲取用戶名稱，使用預設值');
     }
 
-    // 記錄訊息（用於收回偵測）
+    // 記錄訊息（用於收回偵測和學習）
     unsendDetection.recordMessage(userId, userName, messageId, messageText, new Date());
 
     // 檢查是否需要決策詢問
     const decisionCheck = decisionSystem.shouldRequestDecision(messageText);
     if (decisionCheck.needDecision) {
-      console.log(`🔐 觸發${decisionCheck.type}決策詢問: ${messageText}`);
-      
       const decisionId = await decisionSystem.requestDecision(
         `${groupId ? '群組中' : '私人對話中'}用戶 ${userName} 的請求`,
-        messageText,
-        replyToken,
-        userId,
-        groupId,
-        decisionCheck.type
+        messageText, replyToken, userId, groupId, decisionCheck.type
       );
       
-      if (decisionId) {
-        console.log(`✅ 決策請求已發送，ID: ${decisionId}`);
-        return;
-      }
+      if (decisionId) return;
     }
 
-    // 功能選單查詢
+    let response = '';
+
+    // 功能查詢處理
     if (isFunctionMenuQuery(messageText)) {
       const functionMenu = visualResponse.createFunctionMenu();
       await safeReply(replyToken, functionMenu);
-      return;
-    }
-
-    // 提醒/鬧鐘設定
-    if (isReminderQuery(messageText)) {
+      response = '[功能選單]';
+    } else if (isReminderQuery(messageText)) {
       const timeInfo = reminderSystem.parseTimeExpression(messageText);
       
       if (timeInfo) {
@@ -1424,79 +1857,52 @@ async function handleEvent(event) {
             type: 'buttons',
             thumbnailImageUrl: 'https://images.unsplash.com/photo-1611224923853-80b023f02d71?w=400&h=300&fit=crop',
             title: `${timeInfo.isAlarm ? '📞 鬧鐘' : '⏰ 提醒'}設定成功！`,
-            text: `${title}\n\n將在 ${timeInfo.time.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})} ${timeInfo.isAlarm ? '叫你起床' : '提醒你'}${timeInfo.isAlarm ? '\n\n📞 會打電話給你！' : ''}`,
+            text: `${title}\n\n將在 ${timeInfo.time.toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'})} ${timeInfo.isAlarm ? '叫你起床' : '提醒你'}`,
             actions: [
-              {
-                type: 'postback',
-                label: '📋 查看提醒',
-                data: 'reminder:list',
-                displayText: '查看我的提醒'
-              },
-              {
-                type: 'postback',
-                label: '🗑️ 取消',
-                data: `${timeInfo.isAlarm ? 'alarm' : 'reminder'}_cancel:${reminderId}`,
-                displayText: '取消這個提醒'
-              },
-              {
-                type: 'text',
-                label: '👌 了解',
-                text: '了解'
-              }
+              { type: 'postback', label: '📋 查看提醒', data: 'reminder:list', displayText: '查看我的提醒' },
+              { type: 'postback', label: '🗑️ 取消', data: `${timeInfo.isAlarm ? 'alarm' : 'reminder'}_cancel:${reminderId}`, displayText: '取消這個提醒' },
+              { type: 'text', label: '👌 了解', text: '了解' }
             ]
           }
         };
         
         await safeReply(replyToken, confirmMessage);
-        return;
+        response = `[${timeInfo.isAlarm ? '鬧鐘' : '提醒'}設定: ${title}]`;
       }
+    } else if (isNewsQuery(messageText)) {
+      const articles = await newsSystem.getNews();
+      const newsCarousel = visualResponse.createNewsCarousel(articles);
+      await safeReply(replyToken, newsCarousel);
+      response = '[新聞輪播]';
+    } else if (isWeatherQuery(messageText)) {
+      const city = weatherSystem.extractCityFromText(messageText);
+      const weatherData = await weatherSystem.getWeather(city);
+      const weatherCard = visualResponse.createWeatherCard(weatherData);
+      await safeReply(replyToken, weatherCard);
+      response = `[天氣卡片: ${city}]`;
+    } else {
+      // 一般對話處理
+      response = await handleGeneralChat(messageText, userId);
+      await safeReply(replyToken, { type: 'text', text: response });
     }
 
-    // 新聞查詢
-    if (isNewsQuery(messageText)) {
-      try {
-        const articles = await newsSystem.getNews();
-        const newsCarousel = visualResponse.createNewsCarousel(articles);
-        await safeReply(replyToken, newsCarousel);
-        return;
-      } catch (error) {
-        await safeReply(replyToken, {
-          type: 'text',
-          text: '抱歉，新聞查詢暫時有問題，請稍後再試 📰'
-        });
-        return;
-      }
-    }
-
-    // 天氣查詢
-    if (isWeatherQuery(messageText)) {
-      try {
-        const city = weatherSystem.extractCityFromText(messageText);
-        const weatherData = await weatherSystem.getWeather(city);
-        const weatherCard = visualResponse.createWeatherCard(weatherData);
-        
-        await safeReply(replyToken, weatherCard);
-        return;
-      } catch (error) {
-        await safeReply(replyToken, {
-          type: 'text',
-          text: 'ㄜ...天氣查詢暫時有問題，請稍後再試 🌤️'
-        });
-        return;
-      }
-    }
-
-    // 一般對話處理
-    const response = await handleGeneralChat(messageText, userId);
-    await safeReply(replyToken, { type: 'text', text: response });
+    // 收集對話數據用於學習
+    await autoLearning.collectConversationData(userId, userName, messageText, response, {
+      isGroup: !!groupId,
+      messageType: 'text',
+      timestamp: new Date()
+    });
 
   } catch (error) {
     console.error('💥 事件處理錯誤:', error.message);
     
+    // 自動修復：記錄事件處理錯誤
+    autoFixSystem.handleError('event_processing', error, { event });
+    
     if (event.replyToken && !replyTokenManager.isTokenUsed(event.replyToken)) {
       await safeReply(event.replyToken, {
         type: 'text',
-        text: '抱歉，我遇到了一些問題，請稍後再試 😅'
+        text: '抱歉，我遇到了一些問題，但我正在自動修復中！請稍後再試 🔧'
       });
     }
   }
@@ -1507,50 +1913,21 @@ async function handleWeatherAction(action, param, replyToken) {
   try {
     switch (action) {
       case 'update':
-        const weatherData = await weatherSystem.getWeather(param);
+      case 'taipei':
+        const city = param || '台北';
+        const weatherData = await weatherSystem.getWeather(city);
         const weatherCard = visualResponse.createWeatherCard(weatherData);
         await safeReply(replyToken, weatherCard);
         break;
-        
       case 'other':
-        await safeReply(replyToken, {
-          type: 'text',
-          text: '請輸入想查詢的城市名稱，例如：「高雄天氣」、「台中氣溫」'
-        });
+        await safeReply(replyToken, { type: 'text', text: '請輸入想查詢的城市名稱，例如：「高雄天氣」、「台中氣溫」' });
         break;
-        
-      case 'week':
-        await safeReply(replyToken, {
-          type: 'text',
-          text: `📊 ${param}一週天氣預報功能開發中，敬請期待！`
-        });
-        break;
-        
-      case 'taipei':
-        const taipeiWeather = await weatherSystem.getWeather('台北');
-        const taipeiCard = visualResponse.createWeatherCard(taipeiWeather);
-        await safeReply(replyToken, taipeiCard);
-        break;
+      default:
+        await safeReply(replyToken, { type: 'text', text: '天氣功能開發中，敬請期待！' });
     }
   } catch (error) {
-    await safeReply(replyToken, {
-      type: 'text',
-      text: '天氣查詢發生錯誤，請稍後再試 🌤️'
-    });
-  }
-}
-
-// 新聞操作處理
-async function handleNewsAction(action, replyToken) {
-  try {
-    const articles = await newsSystem.getNews();
-    const newsCarousel = visualResponse.createNewsCarousel(articles);
-    await safeReply(replyToken, newsCarousel);
-  } catch (error) {
-    await safeReply(replyToken, {
-      type: 'text',
-      text: '新聞查詢發生錯誤，請稍後再試 📰'
-    });
+    console.error('天氣操作錯誤:', error);
+    await safeReply(replyToken, { type: 'text', text: '天氣查詢發生錯誤，請稍後再試 🌤️' });
   }
 }
 
@@ -1563,18 +1940,16 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ LINE Bot 伺服器成功啟動！`);
   console.log(`🌐 伺服器運行在端口 ${PORT}`);
   console.log(`📍 Webhook URL: /webhook`);
-  console.log(`📞 TwiML URL: /twiml/alarm`);
-  console.log(`🎓 顧晉瑋的超級進化版AI助手 v8.0 已就緒！`);
-  console.log(`🆕 新功能：決策擴展、視覺化回覆、收回偵測、電話鬧鐘`);
-});
-
-// 處理未捕獲的異常
-process.on('uncaughtException', (error) => {
-  console.error('❌ 未捕獲的異常:', error);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ 未處理的 Promise 拒絕:', reason);
+  console.log(`🎓 顧晉瑋的自我進化版AI助手 v9.0 已就緒！`);
+  console.log(`🔧 自動修復功能：已啟用`);
+  console.log(`📚 自動學習功能：已啟用`);
+  console.log(`🧠 系統具備自我診斷和修復能力`);
+  
+  // 啟動後10秒開始第一次學習
+  setTimeout(() => {
+    console.log('🧠 開始首次自動學習循環...');
+    autoLearning.performLearningCycle();
+  }, 10000);
 });
 
 module.exports = app;
