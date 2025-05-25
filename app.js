@@ -934,6 +934,12 @@ app.get('/', (req, res) => {
   const currentTime = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   const apiStatus = apiManager.getAPIStatus();
   
+  let apiStatusHtml = '';
+  for (const [api, status] of Object.entries(apiStatus)) {
+    const lastSuccessText = status.lastSuccess ? status.lastSuccess.toLocaleString('zh-TW') : '無';
+    apiStatusHtml += `<p><strong>${api}:</strong> ${status.status} (失敗次數: ${status.failureCount}, 最後成功: ${lastSuccessText})</p>`;
+  }
+  
   res.send(`
     <h1>🎓 顧晉瑋的修復版超智能AI助手 v7.1</h1>
     <p><strong>身份：靜宜大學資訊管理系學生</strong></p>
@@ -948,28 +954,35 @@ app.get('/', (req, res) => {
       <li>✅ <strong>修復新聞功能</strong> - 錯誤處理和備用內容</li>
       <li>✅ <strong>增強決策系統</strong> - 改善私訊通知</li>
       <li>✅ <strong>強化矛盾檢測</strong> - 修復報告機制</li>
+      <li>✅ <strong>修復語法錯誤</strong> - 解決模板字符串問題</li>
     </ul>
     
     <h2>📊 API狀態監控：</h2>
     <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
-      ${Object.entries(apiStatus).map(([api, status]) => 
-        `<p><strong>${api}:</strong> ${status.status} 
-         (失敗次數: ${status.failureCount}, 
-         最後成功: ${status.lastSuccess ? status.lastSuccess.toLocaleString('zh-TW') : '無'})</p>`
-      ).join('')}
+      ${apiStatusHtml}
     </div>
     
     <h2>🧪 系統測試：</h2>
-    <p><a href="/test" target="_blank">點擊進行系統測試</a></p>
+    <p><a href="/test" target="_blank" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">點擊進行系統測試</a></p>
     
     <h2>📱 使用方式：</h2>
     <ul>
       <li><strong>查詢天氣：</strong>「台北天氣」「高雄會下雨嗎」</li>
       <li><strong>最新新聞：</strong>「新聞」「今日頭條」</li>
       <li><strong>一般對話：</strong>直接聊天即可</li>
+      <li><strong>決策功能：</strong>敏感操作會先私訊詢問</li>
+      <li><strong>矛盾檢測：</strong>發現矛盾言論會私訊通知</li>
     </ul>
 
-    <p><strong>💡 修復完成！現在系統更穩定了！好der 👌</strong></p>
+    <p><strong>💡 修復完成！語法錯誤已解決，系統更穩定了！好der 👌</strong></p>
+    
+    <style>
+      body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+      h1, h2 { color: #333; }
+      ul li { margin: 5px 0; }
+      .status-healthy { color: green; }
+      .status-unhealthy { color: red; }
+    </style>
   `);
 });
 
@@ -996,33 +1009,38 @@ app.get('/test', async (req, res) => {
   
   try {
     // 測試推送訊息
-    res.write(`<script>addResult('📨 測試推送訊息...');</script>`);
+    res.write('<script>addResult("📨 測試推送訊息...");</script>');
     const pushTest = await pushMessageSystem.testPushMessage();
-    res.write(`<script>addResult('📨 推送訊息測試: ${pushTest ? '✅ 成功' : '❌ 失敗}');</script>`);
+    const pushResult = pushTest ? '✅ 成功' : '❌ 失敗';
+    res.write(`<script>addResult("📨 推送訊息測試: ${pushResult}");</script>`);
     
     // 測試天氣API
-    res.write(`<script>addResult('🌤️ 測試天氣API...');</script>`);
+    res.write('<script>addResult("🌤️ 測試天氣API...");</script>');
     try {
       const weatherData = await weatherSystem.getWeather('台北');
-      res.write(`<script>addResult('🌤️ 天氣API測試: ✅ 成功 (來源: ${weatherData.source})');</script>`);
+      res.write(`<script>addResult("🌤️ 天氣API測試: ✅ 成功 (來源: ${weatherData.source})");</script>`);
     } catch (error) {
-      res.write(`<script>addResult('🌤️ 天氣API測試: ❌ 失敗 - ${error.message}');</script>`);
+      const errorMsg = error.message.replace(/"/g, '\\"');
+      res.write(`<script>addResult("🌤️ 天氣API測試: ❌ 失敗 - ${errorMsg}");</script>`);
     }
     
     // 測試AI API
-    res.write(`<script>addResult('🤖 測試AI API...');</script>`);
+    res.write('<script>addResult("🤖 測試AI API...");</script>');
     try {
       const aiResponse = await apiManager.smartAPICall('你好，這是測試訊息');
-      res.write(`<script>addResult('🤖 AI API測試: ✅ 成功');</script>`);
-      res.write(`<script>addResult('🤖 AI回應: ${aiResponse.substring(0, 50)}...');</script>`);
+      res.write('<script>addResult("🤖 AI API測試: ✅ 成功");</script>');
+      const shortResponse = aiResponse.substring(0, 50).replace(/"/g, '\\"');
+      res.write(`<script>addResult("🤖 AI回應: ${shortResponse}...");</script>`);
     } catch (error) {
-      res.write(`<script>addResult('🤖 AI API測試: ❌ 失敗 - ${error.message}');</script>`);
+      const errorMsg = error.message.replace(/"/g, '\\"');
+      res.write(`<script>addResult("🤖 AI API測試: ❌ 失敗 - ${errorMsg}");</script>`);
     }
     
-    res.write(`<script>addResult('✅ 系統測試完成！');</script>`);
+    res.write('<script>addResult("✅ 系統測試完成！");</script>');
     
   } catch (error) {
-    res.write(`<script>addResult('❌ 測試過程發生錯誤: ${error.message}');</script>`);
+    const errorMsg = error.message.replace(/"/g, '\\"');
+    res.write(`<script>addResult("❌ 測試過程發生錯誤: ${errorMsg}");</script>`);
   }
   
   res.end();
