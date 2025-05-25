@@ -3,6 +3,7 @@ const line = require('@line/bot-sdk');
 const axios = require('axios');
 const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const twilio = require('twilio'); // Added for Twilio integration
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,6 +28,29 @@ const NEWS_API_KEY = process.env.NEWS_API_KEY || '5807e3e70bd2424584afdfc6e93210
 const TMDB_API_KEY = process.env.TMDB_API_KEY || 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIyMzI4YmU1YzdhNDA1OTczZDdjMjA0NDlkYmVkOTg4OCIsIm5iZiI6MS43NDYwNzg5MDI5MTgwMDAyZSs5LCJzdWIiOiI2ODEzMGNiNjgyODI5Y2NhNzExZmJkNDkiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.FQlIdfWlf4E0Tw9sYRF7txbWymAby77KnHjTVNFSpdM';
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || 'CWA-C80C73F3-7042-4D8D-A88A-D39DD2CFF841';
 
+// Twilio Configuration
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || 'YOUR_TWILIO_ACCOUNT_SID_PLACEHOLDER';
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || 'YOUR_TWILIO_AUTH_TOKEN_PLACEHOLDER';
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || 'YOUR_TWILIO_PHONE_NUMBER_PLACEHOLDER'; // Your Twilio phone number
+const OWNER_PHONE_NUMBER = process.env.OWNER_PHONE_NUMBER || 'OWNER_PHONE_NUMBER_TO_CALL_PLACEHOLDER';   // Recipient's phone number (E.164 format)
+
+let twilioClient = null;
+if (TWILIO_ACCOUNT_SID !== 'YOUR_TWILIO_ACCOUNT_SID_PLACEHOLDER' && 
+    TWILIO_AUTH_TOKEN !== 'YOUR_TWILIO_AUTH_TOKEN_PLACEHOLDER' &&
+    TWILIO_PHONE_NUMBER !== 'YOUR_TWILIO_PHONE_NUMBER_PLACEHOLDER' &&
+    OWNER_PHONE_NUMBER !== 'OWNER_PHONE_NUMBER_TO_CALL_PLACEHOLDER') {
+  try {
+    twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
+    console.log('📞 Twilio client initialized successfully.');
+  } catch (error) {
+    console.error('📞 Twilio client initialization failed:', error.message);
+    twilioClient = null;
+  }
+} else {
+  console.log('📞 Twilio credentials not fully configured (SID, Token, Twilio Phone, or Owner Phone missing/placeholders). Twilio client not initialized.');
+  twilioClient = null;
+}
+
 // 用戶配置
 const OWNER_LINE_ID = 'U59af77e69411ffb99a49f1f2c3e2afc4';
 const MAX_MESSAGE_LENGTH = 2000;
@@ -44,7 +68,7 @@ class EnhancedAISystem {
     this.conversations = new Map();
     this.userProfiles = new Map();
     this.groupContexts = new Map(); // 儲存群組對話上下文
-    console.log('🧠 增強版AI系統已初始化');
+    console.log('🧠 [AI_SYSTEM] EnhancedAISystem initialized.');
   }
 
   async generateReply(userId, message, context = {}) {
@@ -61,7 +85,7 @@ class EnhancedAISystem {
       return reply;
 
     } catch (error) {
-      console.error('AI回覆生成失敗:', error);
+      console.error('🧠 [AI_SYSTEM] AI Reply generation failed:', error);
       return this.getOfflineReply(message);
     }
   }
@@ -69,7 +93,7 @@ class EnhancedAISystem {
   async generatePersonalizedReply(message, userProfile, context) {
     try {
       const model = genAI.getGenerativeModel({ 
-        model: "gemini-1.5-flash-002",
+        model: "gemini-1.5-flash-002", 
         generationConfig: {
           temperature: 0.7,
           maxOutputTokens: 1000,
@@ -96,7 +120,7 @@ class EnhancedAISystem {
       return text || this.getOfflineReply(message);
       
     } catch (error) {
-      console.log('Gemini失敗，使用備用AI...');
+      console.log('🧠 [AI_SYSTEM] Gemini failed, attempting backup AI. Error:', error.message);
       return await this.useBackupAI(message, context);
     }
   }
@@ -122,7 +146,7 @@ class EnhancedAISystem {
       return response.data.choices[0].message.content.trim();
       
     } catch (error) {
-      console.error('備用AI也失敗:', error);
+      console.error('🧠 [AI_SYSTEM] Backup AI also failed:', error.message);
       return this.getOfflineReply(message);
     }
   }
@@ -160,7 +184,6 @@ class EnhancedAISystem {
       groupId: context.groupId
     });
 
-    // 記錄群組對話上下文
     if (context.isGroup && context.groupId) {
       if (!this.groupContexts.has(context.groupId)) {
         this.groupContexts.set(context.groupId, []);
@@ -172,7 +195,6 @@ class EnhancedAISystem {
         message,
         timestamp: new Date()
       });
-      // 保留最近20條訊息
       if (groupContext.length > 20) {
         groupContext.shift();
       }
@@ -191,7 +213,7 @@ class EnhancedAISystem {
     profile.messageCount++;
     profile.lastSeen = new Date();
 
-    if (this.conversations.size > 100) {
+    if (this.conversations.size > 1000) { 
       const oldestKey = this.conversations.keys().next().value;
       this.conversations.delete(oldestKey);
     }
@@ -201,7 +223,7 @@ class EnhancedAISystem {
     const context = this.groupContexts.get(groupId) || [];
     const recent = context.slice(-lines);
     return recent.map(msg => 
-      `${msg.userName}: ${msg.message}`
+      `${msg.userName || '未知用戶'}: ${msg.message}`
     ).join('\n');
   }
 }
@@ -210,8 +232,8 @@ class EnhancedAISystem {
 class EnhancedDecisionSystem {
   constructor() {
     this.pendingDecisions = new Map();
-    this.decisionContexts = new Map(); // 儲存決策對應的來源資訊
-    console.log('⚖️ 增強版決策系統已初始化');
+    this.decisionContexts = new Map(); 
+    console.log('⚖️ [DECISION_SYSTEM] EnhancedDecisionSystem initialized.');
   }
 
   shouldAskOwner(message, context) {
@@ -229,6 +251,7 @@ class EnhancedDecisionSystem {
 
   async requestDecision(message, userId, userName, context, replyToken) {
     const decisionId = `decision-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    console.log(`⚖️ [DECISION_SYSTEM] Requesting decision. ID: ${decisionId}, User: ${userName}(${userId}), Msg: "${message.substring(0,50)}..."`);
     
     const decision = {
       id: decisionId,
@@ -251,10 +274,10 @@ class EnhancedDecisionSystem {
     });
 
     try {
-      // 獲取群組對話上下文
       let contextInfo = '';
-      if (context.isGroup && enhancedAI.groupContexts.has(context.groupId)) {
+      if (context.isGroup && context.groupId && enhancedAI.groupContexts.has(context.groupId)) {
         contextInfo = enhancedAI.getGroupContext(context.groupId);
+        console.log(`⚖️ [DECISION_SYSTEM] Fetched group context for decision ${decisionId}`);
       }
 
       const decisionText = `🤔 需要你的決策 [${decisionId.substr(-6)}]
@@ -265,87 +288,142 @@ class EnhancedDecisionSystem {
 
 ${contextInfo ? `\n📝 最近對話紀錄：\n${contextInfo}\n` : ''}
 
-請回覆你的決定，或輸入「?」查看更多對話紀錄
+請回覆你的決定，或輸入「? <ID>」查看特定決策的更多對話紀錄
 決策ID：${decisionId.substr(-6)}`;
 
       await safePushMessage(OWNER_LINE_ID, decisionText);
+      console.log(`⚖️ [DECISION_SYSTEM] Decision request ${decisionId} sent to owner.`);
       return '讓我想想這個請求，稍後回覆你～';
       
     } catch (error) {
-      console.error('決策請求發送失敗:', error);
+      console.error(`⚖️ [DECISION_SYSTEM] Decision request ${decisionId} failed to send:`, error);
       return '我需要想想，稍後回覆你～';
     }
   }
 
   async processOwnerDecision(message, ownerId) {
-    // 檢查是否是查詢更多資訊
-    if (message === '?') {
-      const decisions = Array.from(this.pendingDecisions.values())
-        .filter(d => new Date() - d.timestamp < 3600000); // 1小時內的決策
-      
-      if (decisions.length === 0) {
+    console.log(`⚖️ [DECISION_SYSTEM] processOwnerDecision called with message: "${message}"`);
+    const contextQueryMatch = message.match(/^(?:\?|more info|context)\s*([a-z0-9]{6})$/i);
+    let decisionIdForContext = null;
+
+    if (contextQueryMatch) {
+      decisionIdForContext = contextQueryMatch[1];
+      console.log(`⚖️ [DECISION_SYSTEM] Context query detected for decision ID (short): ${decisionIdForContext}`);
+    } else if (message === '?') {
+      const pending = Array.from(this.pendingDecisions.values())
+        .filter(d => new Date() - d.timestamp < 3600000); 
+
+      if (pending.length === 0) {
+        console.log(`⚖️ [DECISION_SYSTEM] No pending decisions for '?' query.`);
         return '目前沒有待處理的決策';
       }
-
-      let info = '📋 待處理決策列表：\n\n';
-      decisions.forEach(d => {
-        info += `ID: ${d.id.substr(-6)}\n`;
-        info += `來自: ${d.userName}\n`;
-        info += `訊息: ${d.message}\n\n`;
-      });
-      return info;
+      if (pending.length === 1) {
+        decisionIdForContext = pending[0].id.substr(-6);
+        console.log(`⚖️ [DECISION_SYSTEM] Single pending decision, getting context for ID (short): ${decisionIdForContext}`);
+      } else {
+        let info = '📋 待處理決策列表：\n\n';
+        pending.forEach(d => {
+          info += `ID: ${d.id.substr(-6)}\n`;
+          info += `來自: ${d.userName}\n`;
+          info += `訊息: ${d.message.substring(0,30)}...\n\n`;
+        });
+        info += '請輸入 "? <ID>" 或 "context <ID>" 獲取特定決策的更多資訊。';
+        console.log(`⚖️ [DECISION_SYSTEM] Multiple pending decisions listed for '?' query.`);
+        return info;
+      }
     }
 
-    // 檢查是否包含決策ID
-    const idMatch = message.match(/([a-z0-9]{6})/i);
+    if (decisionIdForContext) {
+      let foundDecision = null;
+      for (const [id, d] of this.pendingDecisions) {
+        if (id.endsWith(decisionIdForContext)) {
+          foundDecision = d;
+          break;
+        }
+      }
+
+      if (!foundDecision) {
+        console.log(`⚖️ [DECISION_SYSTEM] Decision ID (short) ${decisionIdForContext} not found for context query.`);
+        return `找不到ID為 ${decisionIdForContext} 的決策請求。`;
+      }
+      console.log(`⚖️ [DECISION_SYSTEM] Found decision for context query: ${foundDecision.id}`);
+
+      let contextMessageText = '';
+      if (foundDecision.context.isGroup && foundDecision.context.groupId) {
+        const groupHistory = enhancedAI.getGroupContext(foundDecision.context.groupId, 20);
+        contextMessageText = groupHistory ? `📝 群組對話紀錄 (最後20則)：\n${groupHistory}` : '此群組目前沒有更多對話紀錄可供顯示。';
+      } else {
+        contextMessageText = '此為私人對話，無自動群組對話紀錄可顯示。';
+      }
+      
+      const fullMessageToOwner = `📖 ID [${decisionIdForContext}] 的詳細資訊：
+👤 來自：${foundDecision.userName}
+💬 原始訊息：${foundDecision.message}
+
+${contextMessageText}
+
+👉 請針對ID [${decisionIdForContext}] 回覆您的決定：同意、拒絕，或「回覆：[您的訊息]」`;
+      
+      await safePushMessage(OWNER_LINE_ID, fullMessageToOwner);
+      console.log(`⚖️ [DECISION_SYSTEM] Sent context for decision ${foundDecision.id} to owner.`);
+      return null; 
+    }
+
+    const actionIdMatch = message.match(/([a-z0-9]{6})/i);
     let targetDecisionId = null;
     let decision = null;
 
-    if (idMatch) {
-      // 根據短ID找到完整的決策
+    if (actionIdMatch) {
+      const shortId = actionIdMatch[1];
       for (const [id, d] of this.pendingDecisions) {
-        if (id.endsWith(idMatch[1])) {
+        if (id.endsWith(shortId)) {
           targetDecisionId = id;
           decision = d;
           break;
         }
       }
+      if(decision) console.log(`⚖️ [DECISION_SYSTEM] Action targeted at decision ID (short): ${shortId}, Full ID: ${targetDecisionId}`);
     } else {
-      // 如果沒有ID，找最近的決策
       const decisions = Array.from(this.pendingDecisions.values());
-      if (decisions.length > 0) {
-        decision = decisions.sort((a, b) => b.timestamp - a.timestamp)[0];
-        targetDecisionId = decision.id;
+      if (decisions.length > 0 && !message.startsWith("?") && !message.startsWith("more info") && !message.startsWith("context")) {
+        if (message.toLowerCase().includes('同意') || message.toLowerCase().includes('ok') || message.toLowerCase().includes('好') ||
+            message.toLowerCase().includes('拒絕') || message.toLowerCase().includes('不') ||
+            message.includes('回覆:') || message.includes('回覆：')) {
+          decision = decisions.sort((a, b) => b.timestamp - a.timestamp)[0];
+          targetDecisionId = decision.id;
+          console.log(`⚖️ [DECISION_SYSTEM] Action without ID, targeting most recent decision: ${targetDecisionId}`);
+        }
       }
     }
 
     if (!decision) {
-      return '找不到對應的決策請求';
+      console.log(`⚖️ [DECISION_SYSTEM] No matching decision found for action message: "${message}"`);
+      return '找不到對應的決策請求，或指令不完整。請確認指令格式，例如：「同意 abc123」或「? abc123」。';
     }
 
-    // 處理決策
     let response = '';
     const lowerMessage = message.toLowerCase();
-    
-    if (lowerMessage.includes('同意') || lowerMessage.includes('ok') || lowerMessage.includes('好')) {
+    const commandPart = lowerMessage.replace(actionIdMatch ? actionIdMatch[0] : '', '').trim();
+
+    if (commandPart.startsWith('同意') || commandPart.startsWith('ok') || commandPart.startsWith('好')) {
       response = await this.handleApproval(decision);
-    } else if (lowerMessage.includes('拒絕') || lowerMessage.includes('不')) {
+    } else if (commandPart.startsWith('拒絕') || commandPart.startsWith('不')) {
       response = await this.handleRejection(decision);
-    } else if (message.includes('回覆:') || message.includes('回覆：')) {
-      const customReply = message.replace(/回覆[:：]/g, '').trim();
+    } else if (message.includes('回覆:') || message.includes('回覆：')) { 
+      const customReply = message.replace(/回覆[:：]/g, '').replace(actionIdMatch ? actionIdMatch[0] : '', '').trim();
       response = await this.handleCustomReply(decision, customReply);
-    } else if (message.includes('更多')) {
-      // 獲取更多上下文
+    } else if (commandPart.includes('更多')) { 
       const moreContext = enhancedAI.getGroupContext(decision.context.groupId, 20);
-      return `更多對話紀錄：\n${moreContext}\n\n請回覆你的決定`;
+      console.log(`⚖️ [DECISION_SYSTEM] '更多' (legacy) command for decision ${targetDecisionId}.`);
+      return `更多對話紀錄：\n${moreContext}\n\n請回覆你的決定 (ID ${targetDecisionId.substr(-6)})`;
     } else {
-      return `請回覆「同意」、「拒絕」或「回覆：[自訂訊息]」\n決策ID：${targetDecisionId.substr(-6)}`;
+      console.log(`⚖️ [DECISION_SYSTEM] Unrecognized command for decision ${targetDecisionId}: "${commandPart}"`);
+      return `無法識別對ID [${targetDecisionId.substr(-6)}] 的指令。請使用「同意」、「拒絕」或「回覆：[自訂訊息]」。`;
     }
 
-    // 移除已處理的決策
     this.pendingDecisions.delete(targetDecisionId);
     this.decisionContexts.delete(targetDecisionId);
-
+    console.log(`⚖️ [DECISION_SYSTEM] Processed and deleted decision ${targetDecisionId}. Response: ${response}`);
     return `✅ 已處理決策 ${targetDecisionId.substr(-6)}\n結果：${response}`;
   }
 
@@ -369,20 +447,13 @@ ${contextInfo ? `\n📝 最近對話紀錄：\n${contextInfo}\n` : ''}
   async sendReplyToSource(decision, message) {
     try {
       if (decision.sourceType === 'group') {
-        // 回覆到群組
-        await client.pushMessage(decision.sourceId, {
-          type: 'text',
-          text: message
-        });
+        await client.pushMessage(decision.sourceId, { type: 'text', text: message });
       } else {
-        // 回覆到私人對話
-        await client.pushMessage(decision.userId, {
-          type: 'text',
-          text: message
-        });
+        await client.pushMessage(decision.userId, { type: 'text', text: message });
       }
+      console.log(`⚖️ [DECISION_SYSTEM] Reply sent to source. Type: ${decision.sourceType}, TargetID: ${decision.sourceType === 'group' ? decision.sourceId : decision.userId}`);
     } catch (error) {
-      console.error('回覆訊息失敗:', error);
+      console.error(`⚖️ [DECISION_SYSTEM] Failed to send reply to source. Error:`, error);
     }
   }
 }
@@ -392,101 +463,102 @@ class EnhancedReminderSystem {
   constructor() {
     this.reminders = new Map();
     this.activeTimers = new Map();
-    console.log('⏰ 增強版提醒系統已初始化');
+    console.log('⏰ [REMINDER_SYSTEM] EnhancedReminderSystem initialized.');
   }
 
   parseTime(text) {
-    console.log('解析時間:', text);
-    
+    console.log(`⏰ [REMINDER_SYSTEM] parseTime called with text: "${text}"`);
+    let result = null;
+    let reminderMethod = 'line'; // Default reminder method
     try {
       const now = new Date();
-      
-      // 相對時間 - 分鐘
-      if (text.includes('分鐘後') || text.includes('分後')) {
-        const match = text.match(/(\d+)\s*分(?:鐘)?後/);
+      let targetTime = null;
+      let isAlarm = false;
+
+      const lowerText = text.toLowerCase();
+      const twilioKeywords = ['打電話提醒', '用電話叫我', 'call alarm'];
+      if (twilioKeywords.some(keyword => lowerText.includes(keyword))) {
+        reminderMethod = 'twilio';
+        console.log(`⏰ [REMINDER_SYSTEM] Twilio reminder method detected in text: "${text}"`);
+      }
+
+      if (lowerText.includes('分鐘後') || lowerText.includes('分後')) {
+        const match = lowerText.match(/(\d+)\s*分(?:鐘)?後/);
         if (match) {
           const minutes = parseInt(match[1]);
-          const targetTime = new Date(now.getTime() + minutes * 60000);
-          return { time: targetTime, isAlarm: false };
+          targetTime = new Date(now.getTime() + minutes * 60000);
         }
-      }
-
-      // 相對時間 - 小時
-      if (text.includes('小時後') || text.includes('時後')) {
-        const match = text.match(/(\d+)\s*(?:小)?時後/);
+      } else if (lowerText.includes('小時後') || lowerText.includes('時後')) {
+        const match = lowerText.match(/(\d+)\s*(?:小)?時後/);
         if (match) {
           const hours = parseInt(match[1]);
-          const targetTime = new Date(now.getTime() + hours * 3600000);
-          return { time: targetTime, isAlarm: false };
+          targetTime = new Date(now.getTime() + hours * 3600000);
         }
-      }
-
-      // 絕對時間 HH:MM
-      const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
-      if (timeMatch) {
-        const hour = parseInt(timeMatch[1]);
-        const minute = parseInt(timeMatch[2]);
-        
-        if (hour >= 0 && hour < 24 && minute >= 0 && minute < 60) {
-          const targetTime = new Date();
-          targetTime.setHours(hour, minute, 0, 0);
-          
-          // 如果時間已過，設為明天
-          if (targetTime <= now) {
-            targetTime.setDate(targetTime.getDate() + 1);
+      } else {
+        const timeMatch = lowerText.match(/(\d{1,2}):(\d{2})/);
+        if (timeMatch) {
+          const hour = parseInt(timeMatch[1]);
+          const minute = parseInt(timeMatch[2]);
+          if (hour >= 0 && hour < 24 && minute >= 0 && minute < 60) {
+            targetTime = new Date();
+            targetTime.setHours(hour, minute, 0, 0);
+            if (targetTime <= now) {
+              targetTime.setDate(targetTime.getDate() + 1);
+            }
           }
-          
-          const isAlarm = text.includes('叫') || text.includes('起床') || text.includes('鬧鐘');
-          return { time: targetTime, isAlarm };
-        }
-      }
-
-      // 點數時間
-      const hourMatch = text.match(/(\d{1,2})\s*點/);
-      if (hourMatch) {
-        const hour = parseInt(hourMatch[1]);
-        
-        if (hour >= 0 && hour < 24) {
-          const targetTime = new Date();
-          targetTime.setHours(hour, 0, 0, 0);
-          
-          if (targetTime <= now) {
-            targetTime.setDate(targetTime.getDate() + 1);
-          }
-          
-          const isAlarm = text.includes('叫') || text.includes('起床') || text.includes('鬧鐘');
-          return { time: targetTime, isAlarm };
-        }
-      }
-
-      // 特定日期時間
-      if (text.includes('明天')) {
-        const targetTime = new Date();
-        targetTime.setDate(targetTime.getDate() + 1);
-        
-        // 檢查是否有具體時間
-        const specificTime = text.match(/(\d{1,2})[點:](\d{0,2})?/);
-        if (specificTime) {
-          const hour = parseInt(specificTime[1]);
-          const minute = specificTime[2] ? parseInt(specificTime[2]) : 0;
-          targetTime.setHours(hour, minute, 0, 0);
         } else {
-          targetTime.setHours(9, 0, 0, 0); // 預設早上9點
+          const hourMatch = lowerText.match(/(\d{1,2})\s*點/);
+          if (hourMatch) {
+            const hour = parseInt(hourMatch[1]);
+            if (hour >= 0 && hour < 24) {
+              targetTime = new Date();
+              targetTime.setHours(hour, 0, 0, 0);
+              if (targetTime <= now) {
+                targetTime.setDate(targetTime.getDate() + 1);
+              }
+            }
+          }
         }
-        
-        const isAlarm = text.includes('叫') || text.includes('起床') || text.includes('鬧鐘');
-        return { time: targetTime, isAlarm };
+        if (lowerText.includes('明天')) { 
+            if (targetTime) { 
+                 if(targetTime <= now && targetTime.getDate() === now.getDate()){ 
+                    targetTime.setDate(targetTime.getDate() + 1);
+                 } else if (targetTime.getDate() === now.getDate()){ 
+                    targetTime.setDate(targetTime.getDate() + 1);
+                 }
+            } else { 
+                targetTime = new Date();
+                targetTime.setDate(targetTime.getDate() + 1);
+                const specificTimeInTomorrow = lowerText.match(/(\d{1,2})[點:](\d{0,2})?/); 
+                if (specificTimeInTomorrow) {
+                    const hour = parseInt(specificTimeInTomorrow[1]);
+                    const minute = specificTimeInTomorrow[2] ? parseInt(specificTimeInTomorrow[2]) : 0;
+                    targetTime.setHours(hour, minute, 0, 0);
+                } else {
+                    targetTime.setHours(9, 0, 0, 0); 
+                }
+            }
+        }
+      }
+      
+      if (targetTime) {
+        isAlarm = lowerText.includes('叫') || lowerText.includes('起床') || lowerText.includes('鬧鐘') || reminderMethod === 'twilio';
+        result = { time: targetTime, isAlarm, reminderMethod };
+        console.log(`⏰ [REMINDER_SYSTEM] parseTime success: targetTime=${targetTime.toISOString()}, isAlarm=${isAlarm}, reminderMethod=${reminderMethod}`);
+      } else {
+        console.log(`⏰ [REMINDER_SYSTEM] parseTime failed to parse time from text: "${text}"`);
       }
 
     } catch (error) {
-      console.error('時間解析錯誤:', error);
+      console.error(`⏰ [REMINDER_SYSTEM] parseTime error for text "${text}":`, error);
     }
-    
-    return null;
+    return result;
   }
 
-  createReminder(userId, title, targetTime, isAlarm = false) {
+  createReminder(userId, title, targetTime, isAlarm = false, reminderMethod = 'line') {
+    console.log(`⏰ [REMINDER_SYSTEM] createReminder called with: userId=${userId}, title="${title}", targetTime=${targetTime.toISOString()}, isAlarm=${isAlarm}, reminderMethod=${reminderMethod}`);
     const reminderId = `reminder-${userId}-${Date.now()}`;
+    console.log(`⏰ [REMINDER_SYSTEM] Generated reminderId: ${reminderId}`);
     
     const reminder = {
       id: reminderId,
@@ -494,58 +566,95 @@ class EnhancedReminderSystem {
       title,
       targetTime,
       isAlarm,
+      reminderMethod, // Store the reminder method
       created: new Date()
     };
-
+    console.log(`⏰ [REMINDER_SYSTEM] Reminder object created: ${JSON.stringify(reminder)}`);
     this.reminders.set(reminderId, reminder);
     
     const delay = targetTime.getTime() - Date.now();
+    console.log(`⏰ [REMINDER_SYSTEM] Calculated delay for reminderId ${reminderId}: ${delay}ms`);
     
     if (delay > 0 && delay < 2147483647) { // JavaScript setTimeout 限制
       const timerId = setTimeout(async () => {
+        console.log(`⏰ [REMINDER_SYSTEM] setTimeout triggered for reminderId: ${reminderId}. Executing reminder.`);
         await this.executeReminder(reminderId);
       }, delay);
       
       this.activeTimers.set(reminderId, timerId);
-      console.log(`✅ 提醒已設定: ${title}, 時間: ${targetTime.toLocaleString('zh-TW')}`);
+      console.log(`⏰ [REMINDER_SYSTEM] setTimeout successfully created for reminderId ${reminderId}. Title: "${title}", Target: ${targetTime.toLocaleString('zh-TW')}`);
       return reminderId;
-    } else if (delay > 0) {
-      console.log('⚠️ 提醒時間太遠，無法設定');
+    } else if (delay <= 0) {
+      console.log(`⏰ [REMINDER_SYSTEM] setTimeout not created for reminderId ${reminderId}: Delay is zero or negative (${delay}ms). Reminder might be in the past.`);
+      this.reminders.delete(reminderId); 
+      return null;
+    } else { 
+      console.log(`⏰ [REMINDER_SYSTEM] setTimeout not created for reminderId ${reminderId}: Delay is too long (${delay}ms). Exceeds setTimeout limit.`);
+      this.reminders.delete(reminderId); 
       return null;
     }
-    
-    return null;
   }
 
   async executeReminder(reminderId) {
+    console.log(`⏰ [REMINDER_SYSTEM] executeReminder called for reminderId: ${reminderId}`);
     const reminder = this.reminders.get(reminderId);
-    if (!reminder) return;
+
+    if (!reminder) {
+      console.log(`⏰ [REMINDER_SYSTEM] Reminder not found for reminderId: ${reminderId}. Might have been deleted or already processed.`);
+      this.activeTimers.delete(reminderId); 
+      return;
+    }
+    console.log(`⏰ [REMINDER_SYSTEM] Found reminder: UserID=${reminder.userId}, Title="${reminder.title}", Method="${reminder.reminderMethod}"`);
 
     try {
-      const reminderText = `⏰ ${reminder.isAlarm ? '鬧鐘' : '提醒'}時間到！
+      if (reminder.reminderMethod === 'twilio') {
+        console.log(`⏰ [REMINDER_SYSTEM] Attempting Twilio call for reminderId: ${reminderId}`);
+        if (twilioClient && OWNER_PHONE_NUMBER && OWNER_PHONE_NUMBER !== 'OWNER_PHONE_NUMBER_TO_CALL_PLACEHOLDER' && TWILIO_PHONE_NUMBER && TWILIO_PHONE_NUMBER !== 'YOUR_TWILIO_PHONE_NUMBER_PLACEHOLDER') {
+          const twimlMessage = `<Response><Say language="zh-TW">你好，這是來自顧晉瑋LINE Bot的提醒： ${reminder.title}</Say></Response>`;
+          console.log(`⏰ [REMINDER_SYSTEM] Twilio TwiML: ${twimlMessage}`);
+          console.log(`⏰ [REMINDER_SYSTEM] Stubbing Twilio call. To: ${OWNER_PHONE_NUMBER}, From: ${TWILIO_PHONE_NUMBER}, Title: "${reminder.title}"`);
+          // STUBBED: Actual call would be:
+          // twilioClient.calls.create({
+          //   twiml: twimlMessage,
+          //   to: OWNER_PHONE_NUMBER, // Must be E.164 format
+          //   from: TWILIO_PHONE_NUMBER // Must be a Twilio number
+          // }).then(call => console.log(`⏰ [REMINDER_SYSTEM] Twilio call initiated, SID: ${call.sid}`))
+          //   .catch(error => console.error(`⏰ [REMINDER_SYSTEM] Twilio call failed:`, error));
+          console.log(`📞 [TWILIO_STUB] Twilio call for reminder "${reminder.title}" would be initiated here if credentials were live and call uncommented.`);
+        } else {
+          console.warn(`⏰ [REMINDER_SYSTEM] Twilio client not available or phone numbers not configured/valid. Cannot make call for reminderId: ${reminderId}.`);
+          console.warn(`📞 Twilio Client: ${twilioClient ? 'Available' : 'Not Available'}, Owner Phone: ${OWNER_PHONE_NUMBER}, Twilio Phone: ${TWILIO_PHONE_NUMBER}`);
+          // Fallback to LINE message if Twilio call cannot be made
+          const fallbackText = `📞 原定電話提醒失敗（系統設定問題）。\n⏰ LINE提醒：${reminder.title}`;
+          await client.pushMessage(reminder.userId, { type: 'text', text: fallbackText });
+          console.log(`⏰ [REMINDER_SYSTEM] Sent fallback LINE reminder for ${reminderId} due to Twilio configuration issue.`);
+        }
+      } else { // Default to 'line'
+        const reminderText = `⏰ ${reminder.isAlarm ? '鬧鐘' : '提醒'}時間到！
 
 📝 ${reminder.title}
 ⏱️ 設定時間：${reminder.created.toLocaleString('zh-TW')}
 
 ${reminder.isAlarm ? '☀️ 起床囉！新的一天開始了！' : '記得處理這件事喔！'}`;
-
-      await client.pushMessage(reminder.userId, {
-        type: 'text',
-        text: reminderText
-      });
-      
-      console.log(`✅ 提醒已發送: ${reminder.title}`);
-      
-      // 清理
+        console.log(`⏰ [REMINDER_SYSTEM] Prepared LINE reminderText for ${reminderId}: "${reminderText.replace(/\n/g, "\\n")}"`);
+        try {
+          await client.pushMessage(reminder.userId, { type: 'text', text: reminderText });
+          console.log(`⏰ [REMINDER_SYSTEM] Successfully sent LINE reminder pushMessage for reminderId: ${reminderId} to userId: ${reminder.userId}`);
+        } catch (pushError) {
+          console.error(`⏰ [REMINDER_SYSTEM] Failed to send LINE reminder pushMessage for reminderId: ${reminderId} to userId: ${reminder.userId}. Error:`, pushError);
+        }
+      }
+    } catch (error) {
+      console.error(`⏰ [REMINDER_SYSTEM] Error preparing reminder for reminderId: ${reminderId}. Error:`, error);
+    } finally {
       this.reminders.delete(reminderId);
       this.activeTimers.delete(reminderId);
-      
-    } catch (error) {
-      console.error('❌ 提醒發送失敗:', error);
+      console.log(`⏰ [REMINDER_SYSTEM] Deleted reminder and activeTimer for reminderId: ${reminderId} from maps.`);
     }
   }
 
   extractTitle(text) {
+    console.log(`⏰ [REMINDER_SYSTEM] extractTitle called with text: "${text}"`);
     let title = text;
     
     // 移除時間相關詞語
@@ -558,28 +667,32 @@ ${reminder.isAlarm ? '☀️ 起床囉！新的一天開始了！' : '記得處�
       /提醒我/g,
       /叫我/g,
       /起床/g,
-      /鬧鐘/g
+      /鬧鐘/g,
+      /幫我設/g,
+      /設定一個/g,
+      /打電話提醒/gi, 
+      /用電話叫我/gi,
+      /call alarm/gi
     ];
     
     timePatterns.forEach(pattern => {
       title = title.replace(pattern, '');
     });
     
-    title = title.trim();
-    
-    // 如果沒有剩餘內容，根據類型返回預設標題
+    title = title.replace(/的$/,'').trim(); 
+
     if (!title) {
       if (text.includes('起床') || text.includes('鬧鐘')) {
-        return '起床鬧鐘';
+        title = '起床鬧鐘';
       } else if (text.includes('開會')) {
-        return '開會提醒';
+        title = '開會提醒';
       } else if (text.includes('吃藥')) {
-        return '吃藥提醒';
+        title = '吃藥提醒';
       } else {
-        return '提醒事項';
+        title = '提醒事項';
       }
     }
-    
+    console.log(`⏰ [REMINDER_SYSTEM] Extracted title: "${title}" from text: "${text}"`);
     return title;
   }
 
@@ -605,26 +718,31 @@ ${reminder.isAlarm ? '☀️ 起床囉！新的一天開始了！' : '記得處�
 // 網路搜尋功能
 class WebSearchSystem {
   constructor() {
-    console.log('🔍 網路搜尋系統已初始化');
+    console.log('🔍 [WEB_SEARCH_SYSTEM] WebSearchSystem initialized.');
   }
 
   async search(query) {
+    console.log(`🔍 [WEB_SEARCH_SYSTEM] search called with query: "${query}"`);
+    let finalResultText = '';
     try {
-      // 使用 DuckDuckGo HTML API（免費且不需要 API key）
       const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+      console.log(`🔍 [WEB_SEARCH_SYSTEM] Constructed DuckDuckGo searchUrl: ${searchUrl}`);
       
       const response = await axios.get(searchUrl, {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         },
         timeout: 10000
       });
+      console.log(`🔍 [WEB_SEARCH_SYSTEM] DuckDuckGo response status: ${response.status}`);
 
-      // 簡單解析搜尋結果（因為是 HTML 格式）
       const results = this.parseSearchResults(response.data);
+      console.log(`🔍 [WEB_SEARCH_SYSTEM] parseSearchResults returned ${results.length} results.`);
       
       if (results.length === 0) {
-        return '沒有找到相關的搜尋結果';
+        finalResultText = `🤔 關於「${query}」，我找不到直接的網頁結果，讓我試試用AI總結一下。`;
+        // Force fallback to Gemini by throwing a custom error or by re-throwing a generic one after logging
+        throw new Error("No results from DuckDuckGo parsing, attempting AI fallback.");
       }
 
       let resultText = `🔍 搜尋「${query}」的結果：\n\n`;
@@ -633,44 +751,54 @@ class WebSearchSystem {
         resultText += `${result.snippet}\n`;
         resultText += `🔗 ${result.link}\n\n`;
       });
-
-      return resultText;
+      finalResultText = resultText;
 
     } catch (error) {
-      console.error('搜尋失敗:', error);
+      console.error(`🔍 [WEB_SEARCH_SYSTEM] DuckDuckGo search failed or parsing yielded no results. Error: ${error.message}`);
+      if (error.response) {
+        console.error(`🔍 [WEB_SEARCH_SYSTEM] DDG Error response status: ${error.response.status}`);
+        console.error(`🔍 [WEB_SEARCH_SYSTEM] DDG Error response data: ${JSON.stringify(error.response.data).substring(0, 200)}...`);
+      } else if (error.request) {
+        console.error('🔍 [WEB_SEARCH_SYSTEM] DDG Error request: The request was made but no response was received');
+      }
       
-      // 使用 AI 生成相關回應作為備用
+      console.log(`🔍 [WEB_SEARCH_SYSTEM] Falling back to Gemini AI for query: "${query}"`);
       try {
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-002" });
-        const prompt = `用戶想要搜尋關於「${query}」的資訊，請提供相關的知識和見解（約150字）`;
+        const prompt = `用戶想要搜尋關於「${query}」的資訊，但直接網頁搜尋沒有結果。請根據你的知識庫，提供關於「${query}」的相關知識和見解（約150字）。`;
+        console.log(`🔍 [WEB_SEARCH_SYSTEM] Prompt to Gemini: "${prompt}"`);
         
         const result = await model.generateContent(prompt);
-        const response = await result.response;
-        return `💡 關於「${query}」：\n\n${response.text()}`;
+        const geminiResponse = await result.response;
+        const geminiText = geminiResponse.text();
+        console.log(`🔍 [WEB_SEARCH_SYSTEM] Gemini response text (first 100 chars): "${geminiText.substring(0,100).replace(/\n/g, "\\n")}"`);
+        finalResultText = `💡 關於「${query}」：\n\n${geminiText}`;
         
       } catch (aiError) {
-        return '抱歉，搜尋功能暫時無法使用，請稍後再試';
+        console.error(`🔍 [WEB_SEARCH_SYSTEM] Gemini AI fallback also failed. AI Error: ${aiError.message}`);
+        finalResultText = '抱歉，目前搜尋功能遇到一些問題，請稍後再試。';
       }
     }
+    console.log(`🔍 [WEB_SEARCH_SYSTEM] Final resultText (first 100 chars): "${finalResultText.substring(0,100).replace(/\n/g, "\\n")}"`);
+    return finalResultText;
   }
 
   parseSearchResults(html) {
+    console.log(`🔍 [WEB_SEARCH_SYSTEM] parseSearchResults called with HTML (first 300 chars): "${html.substring(0, 300).replace(/\n/g, "\\n")}"`);
     const results = [];
-    
-    // 簡單的 HTML 解析（實際使用時可能需要更完善的解析器）
     const resultPattern = /<a class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]+)<\/a>[\s\S]*?<a class="result__snippet"[^>]*>([^<]+)<\/a>/gi;
     
     let match;
     while ((match = resultPattern.exec(html)) !== null) {
       results.push({
-        link: match[1],
-        title: match[2].trim(),
-        snippet: match[3].trim()
+        link: decodeURIComponent(match[1].replace('/l/?kh=-1&uddg=', '')), 
+        title: match[2].trim().replace(/<b>|<\/b>/gi, ''), 
+        snippet: match[3].trim().replace(/<b>|<\/b>/gi, '') 
       });
       
-      if (results.length >= 5) break;
+      if (results.length >= 5) break; 
     }
-    
+    console.log(`🔍 [WEB_SEARCH_SYSTEM] Extracted ${results.length} results from HTML using regex.`);
     return results;
   }
 }
@@ -678,10 +806,12 @@ class WebSearchSystem {
 // 電影查詢系統
 class MovieSystem {
   constructor() {
-    console.log('🎬 電影查詢系統已初始化');
+    console.log('🎬 [MOVIE_SYSTEM] MovieSystem initialized.');
   }
 
   async searchMovies(query = '') {
+    console.log(`🎬 [MOVIE_SYSTEM] searchMovies called with query: "${query}"`);
+    let movies = []; 
     try {
       let endpoint = 'https://api.themoviedb.org/3/movie/popular';
       let params = {
@@ -689,25 +819,39 @@ class MovieSystem {
         page: 1
       };
 
-      // 如果有特定查詢，使用搜尋 API
       if (query && query.length > 0) {
         endpoint = 'https://api.themoviedb.org/3/search/movie';
         params.query = query;
+        console.log(`🎬 [MOVIE_SYSTEM] Searching for movies with query. Endpoint: ${endpoint}, Params: ${JSON.stringify(params)}`);
+      } else {
+        console.log(`🎬 [MOVIE_SYSTEM] Fetching popular movies. Endpoint: ${endpoint}, Params: ${JSON.stringify(params)}`);
       }
 
       const response = await axios.get(endpoint, {
         headers: {
-          'Authorization': `Bearer ${TMDB_API_KEY}`,
+          'Authorization': `Bearer ${TMDB_API_KEY}`, 
           'Content-Type': 'application/json'
         },
         params: params,
         timeout: 10000
       });
 
-      const movies = response.data.results.slice(0, 5);
+      console.log(`🎬 [MOVIE_SYSTEM] TMDB API response status: ${response.status}`);
+      if (response.data && Array.isArray(response.data.results)) {
+        console.log(`🎬 [MOVIE_SYSTEM] TMDB API raw results count: ${response.data.results.length}`);
+        if (response.data.results.length > 0) {
+            console.log(`🎬 [MOVIE_SYSTEM] First movie result: ${JSON.stringify(response.data.results[0].title)}`);
+        }
+        movies = response.data.results.slice(0, 5);
+        console.log(`🎬 [MOVIE_SYSTEM] Processed ${movies.length} movies after slicing.`);
+      } else {
+        console.error('🎬 [MOVIE_SYSTEM] TMDB API response.data.results is not an array or undefined.', response.data);
+        return '抱歉，電影資料格式錯誤，請稍後再試。';
+      }
       
       if (movies.length === 0) {
-        return '沒有找到相關的電影';
+        console.log(`🎬 [MOVIE_SYSTEM] No movies found for query: "${query}"`);
+        return query ? `🎬 找不到關於「${query}」的電影，請試試其他關鍵字。` : '🎬 目前沒有熱門電影資訊。';
       }
 
       let movieList = query ? 
@@ -715,20 +859,36 @@ class MovieSystem {
         '🎬 熱門電影推薦：\n\n';
       
       movies.forEach((movie, index) => {
-        movieList += `${index + 1}. ${movie.title}${movie.original_title !== movie.title ? ` (${movie.original_title})` : ''}\n`;
-        movieList += `⭐ 評分：${movie.vote_average}/10\n`;
-        movieList += `📅 上映日期：${movie.release_date}\n`;
+        movieList += `${index + 1}. ${movie.title || '未知標題'}${movie.original_title && movie.original_title !== movie.title ? ` (${movie.original_title})` : ''}\n`;
+        movieList += `⭐ 評分：${movie.vote_average !== undefined ? movie.vote_average : 'N/A'}/10\n`;
+        movieList += `📅 上映日期：${movie.release_date || '未知日期'}\n`;
         if (movie.overview) {
           movieList += `📝 ${movie.overview.substring(0, 60)}...\n`;
+        } else {
+          movieList += `📝 暫無簡介\n`;
         }
         movieList += '\n';
       });
-
+      
+      console.log(`🎬 [MOVIE_SYSTEM] Generated movieList (first 100 chars): "${movieList.substring(0, 100).replace(/\n/g, "\\n")}"`);
       return movieList;
 
     } catch (error) {
-      console.error('電影查詢錯誤:', error);
-      return '抱歉，電影查詢功能暫時無法使用';
+      console.error('🎬 [MOVIE_SYSTEM] searchMovies error:', error.message);
+      if (error.response) {
+        console.error('🎬 [MOVIE_SYSTEM] Error response status:', error.response.status);
+        console.error('🎬 [MOVIE_SYSTEM] Error response data:', JSON.stringify(error.response.data));
+        if (error.response.status === 401) {
+          return '抱歉，電影查詢API認證失敗，請檢查API金鑰設定。';
+        } else if (error.response.status === 404) {
+          return '抱歉，找不到指定的電影資源，請確認查詢條件。';
+        }
+      } else if (error.request) {
+        console.error('🎬 [MOVIE_SYSTEM] Error request:', 'The request was made but no response was received');
+      } else {
+        console.error('🎬 [MOVIE_SYSTEM] Error details:', error);
+      }
+      return '抱歉，電影查詢功能暫時無法使用，請稍後再試。';
     }
   }
 }
@@ -736,52 +896,89 @@ class MovieSystem {
 // 訊息轉發系統
 class MessageForwardSystem {
   constructor() {
-    this.userList = new Map(); // 儲存已知用戶
-    console.log('📨 訊息轉發系統已初始化');
+    this.userList = new Map(); 
+    this.updateCount = 0;
+    console.log('📨 [MSG_FORWARD_SYSTEM] MessageForwardSystem initialized.');
   }
 
   async forwardMessage(targetName, message, sourceUserName) {
+    console.log(`📨 [MSG_FORWARD_SYSTEM] forwardMessage called with: targetName="${targetName}", message="${message.substring(0, 50)}...", sourceUserName="${sourceUserName}"`);
+    let resultMessage = '';
     try {
-      // 查找目標用戶
       const targetUser = this.findUserByName(targetName);
+      console.log(`📨 [MSG_FORWARD_SYSTEM] findUserByName result for "${targetName}": ${JSON.stringify(targetUser)}`);
       
       if (!targetUser) {
-        return `找不到用戶「${targetName}」，請確認名稱是否正確`;
+        resultMessage = `找不到用戶「${targetName}」，請確認名稱是否正確`;
+        console.log(`📨 [MSG_FORWARD_SYSTEM] ${resultMessage}`);
+        return resultMessage;
       }
 
       const forwardMsg = `📨 來自 ${sourceUserName} 的訊息：\n\n${message}`;
+      console.log(`📨 [MSG_FORWARD_SYSTEM] Prepared forwardMsg for userId ${targetUser.userId}: "${forwardMsg.substring(0,100).replace(/\n/g, "\\n")}"`);
       
-      await client.pushMessage(targetUser.userId, {
-        type: 'text',
-        text: forwardMsg
-      });
-
-      return `✅ 訊息已轉發給 ${targetName}`;
+      try {
+        await client.pushMessage(targetUser.userId, { type: 'text', text: forwardMsg });
+        resultMessage = `✅ 訊息已轉發給 ${targetName} (ID: ${targetUser.userId.substring(0,10)}...)`;
+        console.log(`📨 [MSG_FORWARD_SYSTEM] Successfully sent pushMessage to ${targetUser.userId}`);
+      } catch (pushError) {
+        console.error(`📨 [MSG_FORWARD_SYSTEM] Failed to send pushMessage to ${targetUser.userId}. Error:`, pushError.message, pushError.originalError?.response?.data);
+        resultMessage = `訊息轉發給 ${targetName} 失敗，內部錯誤。`;
+      }
+      return resultMessage;
 
     } catch (error) {
-      console.error('訊息轉發失敗:', error);
-      return '訊息轉發失敗，請稍後再試';
+      console.error(`📨 [MSG_FORWARD_SYSTEM] General error in forwardMessage:`, error);
+      resultMessage = '訊息轉發過程中發生未知錯誤，請稍後再試。';
+      return resultMessage;
     }
   }
 
   findUserByName(name) {
+    console.log(`📨 [MSG_FORWARD_SYSTEM] findUserByName called with name: "${name}"`);
+    const matchingUsers = [];
     for (const [userId, userInfo] of this.userList) {
-      if (userInfo.displayName.includes(name)) {
-        return { userId, ...userInfo };
+      if (userInfo.displayName.toLowerCase().includes(name.toLowerCase())) {
+        matchingUsers.push({ userId, ...userInfo });
       }
     }
-    return null;
+
+    if (matchingUsers.length === 0) {
+      console.log(`📨 [MSG_FORWARD_SYSTEM] No user found matching name: "${name}"`);
+      return null;
+    }
+
+    if (matchingUsers.length > 1) {
+      console.warn(`📨 [MSG_FORWARD_SYSTEM] Ambiguous name: "${name}". Found ${matchingUsers.length} users: ${JSON.stringify(matchingUsers.map(u => `${u.displayName}(${u.userId.substring(0,10)}...)`))}. Returning the first match.`);
+    }
+    
+    const foundUser = matchingUsers[0];
+    console.log(`📨 [MSG_FORWARD_SYSTEM] User found for name "${name}": ${foundUser.displayName} (ID: ${foundUser.userId})`);
+    return foundUser;
   }
 
   updateUserList(userId, displayName) {
+    const isNewUser = !this.userList.has(userId);
+    const oldDisplayName = isNewUser ? null : this.userList.get(userId).displayName;
+    
     this.userList.set(userId, { displayName, lastSeen: new Date() });
+    this.updateCount++;
+
+    if (isNewUser) {
+      console.log(`📨 [MSG_FORWARD_SYSTEM] New user added to list: ${displayName} (ID: ${userId}). Total users: ${this.userList.size}.`);
+    } else if (oldDisplayName !== displayName) {
+      console.log(`📨 [MSG_FORWARD_SYSTEM] User display name updated: Old="${oldDisplayName}", New="${displayName}" (ID: ${userId}). Total users: ${this.userList.size}.`);
+    }
+    if (this.updateCount % 10 === 0) {
+      console.log(`📨 [MSG_FORWARD_SYSTEM] updateUserList has been called ${this.updateCount} times. Current userList size: ${this.userList.size}.`);
+    }
   }
 }
 
 // 增強版私訊系統
 class EnhancedPrivateMessageSystem {
   constructor() {
-    console.log('💬 增強版私訊系統已初始化');
+    console.log('💬 [ENHANCED_PM_SYSTEM] EnhancedPrivateMessageSystem initialized.');
   }
 
   async handlePrivateMessage(userId, userName, message) {
@@ -789,118 +986,135 @@ class EnhancedPrivateMessageSystem {
       return await this.handleOwnerMessage(message);
     }
     
-    // 更新用戶列表
-    messageForward.updateUserList(userId, userName);
-    
     return await enhancedAI.generateReply(userId, message, { isGroup: false });
   }
 
   async handleOwnerMessage(message) {
-    // 處理決策回覆
+    console.log(`💬 [ENHANCED_PM_SYSTEM] handleOwnerMessage received: "${message}"`);
     if (decisionSystem.pendingDecisions.size > 0) {
       const decisionResponse = await decisionSystem.processOwnerDecision(message, OWNER_LINE_ID);
-      if (!decisionResponse.includes('找不到對應的決策請求')) {
+      if (decisionResponse && !decisionResponse.includes('找不到對應的決策請求')) {
+        console.log(`💬 [ENHANCED_PM_SYSTEM] Decision system responded: "${decisionResponse}"`);
         return decisionResponse;
+      } else if (decisionResponse === null) {
+        console.log(`💬 [ENHANCED_PM_SYSTEM] Decision system is awaiting further input or has sent context.`);
+        return null; 
       }
     }
 
-    // 處理指令
     if (message.startsWith('/')) {
+      console.log(`💬 [ENHANCED_PM_SYSTEM] Detected command: "${message}"`);
       return await this.handleCommand(message);
     }
 
-    // 處理訊息轉發
-    if (message.includes('告訴') || message.includes('跟') && message.includes('說')) {
-      return await this.handleMessageForward(message);
+    const forwardMatch = message.match(/(?:告訴|跟)\s*([^說:]+?)\s*(?:說|:)(.+)/);
+    if (forwardMatch) {
+      console.log(`💬 [ENHANCED_PM_SYSTEM] Detected message forward pattern in: "${message}"`);
+      return await this.handleMessageForward(message, forwardMatch);
     }
     
+    console.log(`💬 [ENHANCED_PM_SYSTEM] No specific handler for owner message, passing to AI: "${message}"`);
     return await enhancedAI.generateReply(OWNER_LINE_ID, message, { isGroup: false });
   }
 
   async handleCommand(command) {
+    console.log(`💬 [ENHANCED_PM_SYSTEM] handleCommand called with: "${command}"`);
     const cmd = command.substring(1).toLowerCase().split(' ')[0];
-    
+    let response = '';
     switch (cmd) {
       case 'status':
-        return this.getSystemStatus();
-      
+        response = this.getSystemStatus();
+        break;
       case 'users':
-        return this.getUserReport();
-      
+        response = this.getUserReport();
+        break;
       case 'reminders':
-        return reminderSystem.listReminders(OWNER_LINE_ID);
-      
+        response = reminderSystem.listReminders(OWNER_LINE_ID);
+        break;
       case 'decisions':
-        return this.getPendingDecisions();
-      
+        response = this.getPendingDecisions();
+        break;
       case 'help':
-        return this.getHelpMenu();
-      
+        response = this.getHelpMenu();
+        break;
       default:
-        return '未知指令，輸入 /help 查看可用指令';
+        response = '未知指令，輸入 /help 查看可用指令';
     }
+    console.log(`💬 [ENHANCED_PM_SYSTEM] Command "${cmd}" generated response (first 50 chars): "${response.substring(0,50).replace(/\n/g, "\\n")}"`);
+    return response;
   }
 
-  async handleMessageForward(message) {
-    // 解析訊息格式：告訴[名字] [訊息內容]
-    const match = message.match(/(?:告訴|跟)(.+?)(?:說|:)(.+)/);
+  async handleMessageForward(originalMessage, match) {
+    console.log(`💬 [ENHANCED_PM_SYSTEM] handleMessageForward called with originalMessage: "${originalMessage}"`);
     
-    if (!match) {
-      return '訊息格式：告訴[名字] [訊息內容]\n例如：告訴小明 等一下開會';
-    }
-
     const targetName = match[1].trim();
     const content = match[2].trim();
     
-    return await messageForward.forwardMessage(targetName, content, '顧晉瑋');
+    console.log(`💬 [ENHANCED_PM_SYSTEM] Parsed for forwarding: targetName="${targetName}", content="${content.substring(0,50)}..."`);
+    
+    if (!targetName || !content) {
+        const errorMsg = '訊息轉發格式錯誤。請使用：「告訴 [名字] [訊息內容]」或「跟 [名字] 說 [訊息內容]」';
+        console.log(`💬 [ENHANCED_PM_SYSTEM] Forwarding format error. Parsed: targetName="${targetName}", content="${content}"`);
+        return errorMsg;
+    }
+    
+    const forwardResult = await messageForward.forwardMessage(targetName, content, '顧晉瑋');
+    console.log(`💬 [ENHANCED_PM_SYSTEM] messageForward.forwardMessage result: "${forwardResult}"`);
+    return forwardResult;
   }
 
   getSystemStatus() {
-    return `🤖 系統狀態報告
+    const statusReport = `🤖 系統狀態報告
 
 ⏰ 提醒系統：正常（${reminderSystem.reminders.size} 個活躍提醒）
-🧠 AI系統：正常  
+🧠 AI系統：正常
 ⚖️ 決策系統：正常（${decisionSystem.pendingDecisions.size} 個待處理）
 🔍 搜尋系統：正常
 🎬 電影系統：正常
-📨 轉發系統：正常
+📨 轉發系統：正常（已知聯絡人 ${messageForward.userList.size} 人）
 💬 對話記錄：${enhancedAI.conversations.size} 筆
-👥 用戶數：${enhancedAI.userProfiles.size} 人
-📱 已知聯絡人：${messageForward.userList.size} 人
+👥 用戶個人資料：${enhancedAI.userProfiles.size} 人
 
 ✅ 所有系統運作正常！`;
+    return statusReport;
   }
 
   getUserReport() {
-    const users = Array.from(enhancedAI.userProfiles.values());
-    let report = `👥 用戶活躍度報告\n\n總用戶：${users.length} 人\n\n`;
+    const users = Array.from(messageForward.userList.entries()); 
+    let report = `👥 已知聯絡人列表 (${users.length} 人)：\n\n`;
     
     const sortedUsers = users
-      .sort((a, b) => b.messageCount - a.messageCount)
-      .slice(0, 10);
+      .map(([userId, data]) => ({ userId, ...data })) 
+      .sort((a, b) => b.lastSeen - a.lastSeen)
+      .slice(0, 20); 
     
     sortedUsers.forEach((user, index) => {
-      report += `${index + 1}. ${user.name}\n`;
-      report += `   💬 訊息數：${user.messageCount}\n`;
-      report += `   🕐 最後活躍：${user.lastSeen.toLocaleString('zh-TW')}\n\n`;
+      report += `${index + 1}. ${user.displayName} (ID: ...${user.userId.slice(-10)})\n`;
+      report += `   🕐 最後互動：${user.lastSeen.toLocaleString('zh-TW')}\n\n`;
     });
     
+    if (users.length > sortedUsers.length) {
+        report += `...還有 ${users.length - sortedUsers.length} 位其他聯絡人。`;
+    }
+    if (users.length === 0) {
+        report = '目前沒有已知的聯絡人。當用戶與機器人互動時，會被加入列表。';
+    }
     return report;
   }
 
   getPendingDecisions() {
-    const decisions = Array.from(decisionSystem.pendingDecisions.values());
+    const decisions = Array.from(decisionSystem.pendingDecisions.values())
+        .filter(d => new Date() - d.timestamp < 3600000); 
     
     if (decisions.length === 0) {
-      return '目前沒有待處理的決策';
+      return '目前沒有1小時內待處理的決策。';
     }
 
-    let report = `⚖️ 待處理決策\n\n共 ${decisions.length} 個\n\n`;
+    let report = `⚖️ 待處理決策 (1小時內)：\n\n共 ${decisions.length} 個\n\n`;
     
-    decisions.forEach((d, index) => {
-      report += `${index + 1}. [${d.id.substr(-6)}]\n`;
-      report += `   👤 ${d.userName}\n`;
-      report += `   💬 ${d.message}\n`;
+    decisions.sort((a,b) => a.timestamp - b.timestamp).forEach((d, index) => { 
+      report += `${index + 1}. [${d.id.substr(-6)}] (來自: ${d.userName})\n`;
+      report += `   💬 ${d.message.substring(0,50)}...\n`;
       report += `   ⏰ ${d.timestamp.toLocaleString('zh-TW')}\n\n`;
     });
     
@@ -1020,9 +1234,9 @@ async function safePushMessage(targetId, message, retryCount = 0) {
 
 // 判斷函數
 function isReminderQuery(text) {
-  const reminderKeywords = ['提醒我', '提醒', '分鐘後', '小時後', '叫我', '起床', '鬧鐘', '明天'];
-  return reminderKeywords.some(keyword => text.includes(keyword)) && 
-         (text.match(/\d/) || text.includes('明天'));
+  const reminderKeywords = ['提醒我', '提醒', '分鐘後', '小時後', '叫我', '起床', '鬧鐘', '明天', '打電話提醒', '用電話叫我', 'call alarm'];
+  return reminderKeywords.some(keyword => text.toLowerCase().includes(keyword.toLowerCase())) && 
+         (text.match(/\d/) || text.toLowerCase().includes('明天'));
 }
 
 function isMovieQuery(text) {
@@ -1044,7 +1258,7 @@ function isFunctionMenuQuery(text) {
 app.get('/', (req, res) => {
   const currentTime = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   
-  res.send(`
+  res.send(\`
     <!DOCTYPE html>
     <html>
     <head>
@@ -1095,8 +1309,8 @@ app.get('/', (req, res) => {
     </head>
     <body>
       <h1>🤖 顧晉瑋的增強版 LINE Bot v11.0</h1>
-      <p><strong>🇹🇼 台灣時間：${currentTime}</strong></p>
-      <p><strong>🔑 機器人主人：${OWNER_LINE_ID}</strong></p>
+      <p><strong>🇹🇼 台灣時間：\${currentTime}</strong></p>
+      <p><strong>🔑 機器人主人：\${OWNER_LINE_ID}</strong></p>
       
       <div class="chart">
         系統運行狀態：優良 ✨
@@ -1104,73 +1318,65 @@ app.get('/', (req, res) => {
       
       <h2>📊 即時系統狀態</h2>
       <div class="status-box">
-        <p>🧠 AI系統：運作中（對話記錄 ${enhancedAI.conversations.size} 筆）</p>
-        <p>⏰ 提醒系統：運作中（活躍提醒 ${reminderSystem.reminders.size} 個）</p>
-        <p>⚖️ 決策系統：運作中（待處理 ${decisionSystem.pendingDecisions.size} 個）</p>
+        <p>🧠 AI系統：運作中（對話記錄 \${enhancedAI.conversations.size} 筆）</p>
+        <p>⏰ 提醒系統：運作中（活躍提醒 \${reminderSystem.reminders.size} 個）</p>
+        <p>⚖️ 決策系統：運作中（待處理 \${decisionSystem.pendingDecisions.size} 個）</p>
         <p>🔍 搜尋系統：運作中</p>
         <p>🎬 電影系統：運作中</p>
-        <p>📨 轉發系統：運作中（聯絡人 ${messageForward.userList.size} 人）</p>
-        <p>👥 總用戶數：${enhancedAI.userProfiles.size} 人</p>
+        <p>📨 訊息轉發系統：運作中（已知聯絡人 \${messageForward.userList.size} 人）</p>
+        <p>👥 用戶個人資料：\${enhancedAI.userProfiles.size} 人</p>
       </div>
       
-      <h2>✨ 核心功能總覽</h2>
+      <h2>✨ 核心功能總覽 (用戶視角)</h2>
       <div class="feature-grid">
         <div class="feature-card">
-          <h3>🧠 智能對話系統</h3>
+          <h3>🧠 智能聊天</h3>
           <ul>
-            <li>Gemini AI + 備用 AI</li>
-            <li>群組上下文記憶</li>
-            <li>個性化回覆</li>
-            <li>離線智能回覆</li>
+            <li>與AI進行自然對話</li>
+            <li>支援群組上下文理解</li>
+            <li>個性化、口語化回覆</li>
+            <li>離線時提供備用回覆</li>
           </ul>
         </div>
         
         <div class="feature-card">
-          <h3>⚖️ 決策詢問系統</h3>
-          <ul>
-            <li>重要事項先詢問主人</li>
-            <li>提供對話上下文</li>
-            <li>支援自訂回覆</li>
-            <li>多群組決策追蹤</li>
-          </ul>
-        </div>
-        
-        <div class="feature-card">
-          <h3>⏰ 提醒系統</h3>
+          <h3>⏰ 提醒與鬧鐘</h3>
           <ul>
             <li>支援多種時間格式</li>
-            <li>鬧鐘功能</li>
-            <li>提醒清單查詢</li>
+            <li>鬧鐘功能 (LINE / 電話語音)</li>
+            <li>提醒清單查詢 (主人)</li>
             <li>智能標題提取</li>
           </ul>
         </div>
         
         <div class="feature-card">
-          <h3>🔍 搜尋系統</h3>
+          <h3>🔍 網路搜尋</h3>
           <ul>
-            <li>網路即時搜尋</li>
-            <li>AI 知識補充</li>
-            <li>結構化結果呈現</li>
+            <li>透過關鍵字進行網頁搜尋 (如 "搜尋...")</li>
+            <li>DuckDuckGo 初步搜尋</li>
+            <li>若無結果則由AI總結知識</li>
+            <li>結構化呈現搜尋結果</li>
           </ul>
         </div>
         
         <div class="feature-card">
-          <h3>🎬 電影查詢</h3>
+          <h3>🎬 電影資訊</h3>
           <ul>
-            <li>熱門電影推薦</li>
-            <li>電影搜尋功能</li>
-            <li>評分與簡介</li>
+            <li>查詢熱門電影</li>
+            <li>透過關鍵字搜尋特定電影</li>
+            <li>顯示評分、上映日期與簡介</li>
           </ul>
         </div>
-        
+
         <div class="feature-card">
-          <h3>📨 訊息轉發</h3>
+          <h3>🤖 智能請求處理</h3>
           <ul>
-            <li>主人可轉發訊息給他人</li>
-            <li>自動記錄聯絡人</li>
-            <li>簡單指令操作</li>
+            <li>特定請求將由AI轉告真人處理</li>
+            <li>用戶將收到最終處理回覆</li>
+            <li>(此過程部分自動化)</li>
           </ul>
         </div>
+
       </div>
       
       <h2>📈 功能使用統計</h2>
@@ -1178,16 +1384,16 @@ app.get('/', (req, res) => {
         <canvas id="statsChart" width="400" height="200"></canvas>
       </div>
       
-      <h2>🔧 v11.0 更新內容</h2>
+      <h2>🔧 v11.0 (近期迭代) 更新內容</h2>
       <ul>
-        <li>✅ 修復決策回覆功能</li>
-        <li>✅ 增強決策系統（提供上下文）</li>
-        <li>✅ 修復提醒系統</li>
-        <li>✅ 修復電影查詢功能</li>
-        <li>✅ 新增網路搜尋功能</li>
-        <li>✅ 新增訊息轉發功能</li>
-        <li>✅ 解決多群組決策混亂問題</li>
-        <li>✅ 優化系統穩定性</li>
+        <li>📞 **電話語音提醒**: 新增Twilio整合，可透過語音通話進行提醒 (需設定環境變數)。</li>
+        <li>🆕 **決策系統強化**: 主人現在可以透過 "? ID" 指令查詢待決策事項的詳細對話上下文。</li>
+        <li>⚙️ **提醒系統日誌與修復**: 增強提醒設定與執行的日誌記錄，提升問題追蹤能力；處理提醒時間已過或過長的情況。</li>
+        <li>🎬 **電影系統日誌與修復**: 強化電影查詢的日誌，API錯誤處理更細緻，資料呈現更穩定。</li>
+        <li>🌐 **網路搜尋日誌與優化**: 網路搜尋功能加入完整日誌，優化搜尋結果解析與AI備援邏輯。</li>
+        <li>📨 **訊息轉發日誌與強化**: 新增訊息轉發功能日誌，強化用戶名稱識別與指令解析的清晰度。</li>
+        <li>📊 **功能列表更新**: 同步更新機器人功能選單與狀態頁面，確保資訊一致性。</li>
+        <li>📝 **全面日誌系統**: 各核心模組均已加入詳細日誌記錄，提升系統可維護性與問題診斷效率。</li>
       </ul>
       
       <script>
@@ -1195,12 +1401,11 @@ app.get('/', (req, res) => {
         const canvas = document.getElementById('statsChart');
         const ctx = canvas.getContext('2d');
         
-        // 繪製簡單的長條圖
         const data = [
-          { label: 'AI對話', value: ${enhancedAI.conversations.size}, color: '#4CAF50' },
-          { label: '用戶數', value: ${enhancedAI.userProfiles.size}, color: '#2196F3' },
-          { label: '提醒數', value: ${reminderSystem.reminders.size}, color: '#FF9800' },
-          { label: '決策數', value: ${decisionSystem.pendingDecisions.size}, color: '#9C27B0' }
+          { label: 'AI對話', value: \${enhancedAI.conversations.size}, color: '#4CAF50' },
+          { label: '用戶數', value: \${enhancedAI.userProfiles.size}, color: '#2196F3' },
+          { label: '提醒數', value: \${reminderSystem.reminders.size}, color: '#FF9800' },
+          { label: '決策數', value: \${decisionSystem.pendingDecisions.size}, color: '#9C27B0' }
         ];
         
         const maxValue = Math.max(...data.map(d => d.value), 10);
@@ -1224,7 +1429,7 @@ app.get('/', (req, res) => {
       </script>
     </body>
     </html>
-  `);
+  \`);
 });
 
 // Webhook 端點
@@ -1248,7 +1453,6 @@ app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) =
 
   res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 
-  // 處理事件
   events.forEach(event => {
     handleEvent(event).catch(error => {
       console.error('事件處理錯誤:', error);
@@ -1267,20 +1471,16 @@ async function handleEvent(event) {
     const replyToken = event.replyToken;
     const isGroup = !!groupId;
     
-    // 獲取用戶名稱
     let userName = '朋友';
     let groupName = '群組';
     try {
       if (groupId) {
         const profile = await client.getGroupMemberProfile(groupId, userId);
         userName = profile.displayName;
-        // 嘗試獲取群組名稱（LINE API 可能不支援）
         try {
           const groupInfo = await client.getGroupSummary(groupId);
           groupName = groupInfo.groupName;
-        } catch (e) {
-          // 忽略錯誤
-        }
+        } catch (e) { /*忽略*/ }
       } else {
         const profile = await client.getProfile(userId);
         userName = profile.displayName;
@@ -1289,50 +1489,161 @@ async function handleEvent(event) {
       console.log('無法獲取用戶名稱');
     }
 
-    // 更新用戶列表
     messageForward.updateUserList(userId, userName);
 
     const context = { isGroup, groupId, userId, userName, groupName };
     let response = '';
 
-    // 私訊特殊處理
     if (!isGroup) {
       response = await privateMessage.handlePrivateMessage(userId, userName, messageText);
       await safeReply(replyToken, response);
       return;
     }
 
-    // 群組消息處理
     if (isFunctionMenuQuery(messageText)) {
-      const menuText = `🎛️ 顧晉瑋的AI助手功能總覽
-
-⏰ 提醒功能：
-• "10分鐘後提醒我休息"
-• "3:30提醒我開會"  
-• "明天7點叫我起床"
-
-💬 智能對話：
-• 任何問題都可以問我
-• 記得群組對話內容
-
-🔍 搜尋功能：
-• "搜尋最新科技新聞"
-• "幫我查天氣"
-
-🎬 電影查詢：
-• "最近有什麼電影"
-• "搜尋電影復仇者聯盟"
-
-⚖️ 決策系統：
-• 重要決定會先詢問主人
-• 提供完整對話脈絡
-
-🔐 隱私保護：
-• 群組對話不會洩露私人信息
-
-💡 更多功能請私訊我！`;
-      
-      await safeReply(replyToken, menuText);
+      const flexMenu = {
+        type: 'flex',
+        altText: '為您打開功能選單，請在LINE應用程式中查看。',
+        contents: {
+          type: 'carousel',
+          contents: [
+            {
+              type: 'bubble',
+              header: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  { type: 'text', text: '🧠 智能聊天', weight: 'bold', size: 'xl', color: '#1DB446' }
+                ]
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'md',
+                contents: [
+                  { 
+                    type: 'text', 
+                    text: '與AI自由對話，問問題，聊天。在群組中我能理解上下文並參與討論。', 
+                    wrap: true, 
+                    size: 'sm' 
+                  }
+                ]
+              },
+              footer: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'sm',
+                contents: [
+                  {
+                    type: 'button',
+                    style: 'primary',
+                    color: '#1DB446',
+                    height: 'sm',
+                    action: { type: 'message', label: '今天天氣如何？', text: '今天天氣如何？' }
+                  },
+                  {
+                    type: 'button',
+                    style: 'primary',
+                    color: '#1DB446',
+                    height: 'sm',
+                    action: { type: 'message', label: '你好嗎？', text: '你好嗎？' }
+                  }
+                ]
+              }
+            },
+            {
+              type: 'bubble',
+              header: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  { type: 'text', text: '⏰ 提醒與鬧鐘', weight: 'bold', size: 'xl', color: '#FF6B6E' }
+                ]
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'md',
+                contents: [
+                  { 
+                    type: 'text', 
+                    text: '設定提醒或鬧鐘 (LINE或電話語音)。\n例:「打電話提醒我明天開會」', 
+                    wrap: true, 
+                    size: 'sm' 
+                  }
+                ]
+              },
+              footer: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'sm',
+                contents: [
+                  {
+                    type: 'button',
+                    style: 'primary',
+                    color: '#FF6B6E',
+                    height: 'sm',
+                    action: { type: 'message', label: '10分鐘後提醒我喝水', text: '10分鐘後提醒我喝水' }
+                  },
+                  {
+                    type: 'button',
+                    style: 'primary',
+                    color: '#FF6B6E',
+                    height: 'sm',
+                    action: { type: 'message', label: '明天早上7點叫我起床', text: '明天早上7點叫我起床' }
+                  }
+                ]
+              }
+            },
+            {
+              type: 'bubble',
+              header: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  { type: 'text', text: '🔍 資訊查詢', weight: 'bold', size: 'xl', color: '#4A90E2' }
+                ]
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'md',
+                contents: [
+                  { 
+                    type: 'text', 
+                    text: '查詢網頁資訊或電影詳情。例如：「搜尋：AI最新發展」或「電影：星際效應」。', 
+                    wrap: true, 
+                    size: 'sm' 
+                  }
+                ]
+              },
+              footer: {
+                type: 'box',
+                layout: 'vertical',
+                spacing: 'sm',
+                contents: [
+                  {
+                    type: 'button',
+                    style: 'primary',
+                    color: '#4A90E2',
+                    height: 'sm',
+                    action: { type: 'message', label: '搜尋：AI最新發展', text: '搜尋：AI最新發展' }
+                  },
+                  {
+                    type: 'button',
+                    style: 'primary',
+                    color: '#4A90E2',
+                    height: 'sm',
+                    action: { type: 'message', label: '電影：星際效應', text: '電影：星際效應' }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      };
+      console.log('🤖 Sending Flex Menu for function query.'); // Added for explicit logging
+      await safeReply(replyToken, flexMenu);
       
     } else if (isReminderQuery(messageText)) {
       console.log('檢測到提醒請求:', messageText);
@@ -1341,10 +1652,14 @@ async function handleEvent(event) {
       
       if (timeInfo && timeInfo.time) {
         const title = reminderSystem.extractTitle(messageText);
-        const reminderId = reminderSystem.createReminder(userId, title, timeInfo.time, timeInfo.isAlarm);
+        // Pass reminderMethod from timeInfo to createReminder
+        const reminderId = reminderSystem.createReminder(userId, title, timeInfo.time, timeInfo.isAlarm, timeInfo.reminderMethod);
         
         if (reminderId) {
-          const confirmText = `✅ ${timeInfo.isAlarm ? '鬧鐘' : '提醒'}設定成功！
+          let confirmText = `✅ ${timeInfo.isAlarm ? '鬧鐘' : '提醒'}設定成功！`;
+          if (timeInfo.reminderMethod === 'twilio') {
+            confirmText += '\n📞 將以電話語音方式提醒。';
+          }
 
 📝 標題：${title}
 ⏰ 時間：${timeInfo.time.toLocaleString('zh-TW', { 
@@ -1370,6 +1685,7 @@ async function handleEvent(event) {
 • "15:30提醒我"
 • "7點叫我起床"
 • "明天8點提醒我上班"
+• (可加上 "打電話提醒" 使用語音通知)
 
 請再試一次～`;
         
@@ -1379,7 +1695,6 @@ async function handleEvent(event) {
     } else if (isMovieQuery(messageText)) {
       console.log('檢測到電影查詢:', messageText);
       
-      // 提取電影名稱
       let movieName = '';
       const searchMatch = messageText.match(/(?:搜尋|查|找).*?電影(.+)|電影.*?(.+)/);
       if (searchMatch) {
@@ -1392,7 +1707,6 @@ async function handleEvent(event) {
     } else if (isWebSearchQuery(messageText)) {
       console.log('檢測到搜尋請求:', messageText);
       
-      // 提取搜尋關鍵字
       let query = messageText;
       const searchMatch = messageText.match(/(?:搜尋|查詢|查一下|幫我查)(.+)|(.+?)(?:是什麼|怎麼辦)/);
       if (searchMatch) {
@@ -1403,12 +1717,10 @@ async function handleEvent(event) {
       await safeReply(replyToken, searchResults);
       
     } else {
-      // 檢查是否需要決策
       if (decisionSystem.shouldAskOwner(messageText, context)) {
         response = await decisionSystem.requestDecision(messageText, userId, userName, context, replyToken);
         await safeReply(replyToken, response);
       } else {
-        // 一般智能對話
         response = await enhancedAI.generateReply(userId, messageText, context);
         await safeReply(replyToken, response);
       }
@@ -1434,7 +1746,6 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`✨ 所有功能正常運作`);
   console.log(`🤖 系統穩定運行中`);
   
-  // 通知主人
   setTimeout(async () => {
     try {
       const startupMessage = `🚀 增強版 v11.0 已啟動！
@@ -1444,6 +1755,7 @@ app.listen(PORT, '0.0.0.0', () => {
 • 網路搜尋功能
 • 訊息轉發功能
 • 多群組決策追蹤
+• 📞 Twilio 語音通話提醒 (實驗性)
 
 ✅ 修復功能：
 • 決策回覆功能
