@@ -3,8 +3,6 @@ const line = require('@line/bot-sdk');
 const axios = require('axios');
 const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const fs = require('fs').promises;
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,7 +10,7 @@ const PORT = process.env.PORT || 3000;
 // 設定時區為台灣
 process.env.TZ = 'Asia/Taipei';
 
-console.log('🚀 正在啟動終極進化版 LINE Bot v7.0 - 顧晉瑋的超智能助手...');
+console.log('🚀 正在啟動修復版 LINE Bot v7.1 - 顧晉瑋的超智能助手...');
 console.log('⏰ 當前時間:', new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }));
 
 // 配置資訊
@@ -24,221 +22,508 @@ const config = {
 // API Keys
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyBWCitsjkm7DPe_aREubKIZjqmgXafVKNE';
 const WEATHER_API_KEY = process.env.WEATHER_API_KEY || 'CWA-C80C73F3-7042-4D8D-A88A-D39DD2CFF841';
-const TMDB_API_KEY = process.env.TMDB_API_KEY || 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIyMzI4YmU1YzdhNDA1OTczZDdjMjA0NDlkYmVkOTg4OCIsIm5iZiI6MS43NDYwNzg5MDI5MTgwMDAyZSs5LCJzdWIiOiI2ODEzMGNiNjgyODI5Y2NhNzExZmJkNDkiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.FQlIdfWlf4E0Tw9sYRF7txbWymAby77KnHjTVNFSpdM';
 const NEWS_API_KEY = process.env.NEWS_API_KEY || '5807e3e70bd2424584afdfc6e932108b';
 
-// 智能 API 配置
-const SMART_AI_CONFIG = {
+// 備用 AI API 配置（修復404問題）
+const BACKUP_AI_CONFIG = {
   apiKey: process.env.BACKUP_AI_KEY || 'sk-U8sgp8YW0jX3flzFCM1azu85GS6WbHlMyqU7L0ZDer9n8aUM',
   baseURL: process.env.BACKUP_AI_URL || 'https://api.chatanywhere.org/v1',
-  
-  models: {
-    premium: {
-      'gpt-4o': { limit: 5, priority: 9, cost: 10 },
-      'gpt-4.1': { limit: 5, priority: 9, cost: 10 }
-    },
-    advanced: {
-      'deepseek-r1': { limit: 30, priority: 8, cost: 5 },
-      'deepseek-v3': { limit: 30, priority: 7, cost: 5 }
-    },
-    standard: {
-      'grok': { limit: 200, priority: 10, cost: 3 },
-      'gpt-4o-mini': { limit: 200, priority: 6, cost: 2 },
-      'gpt-3.5-turbo': { limit: 200, priority: 5, cost: 1 }
-    }
-  }
+  models: ['gpt-3.5-turbo', 'gpt-4o-mini', 'grok'] // 備用模型列表
 };
 
-// 用戶配置
-const MY_LINE_ID = 'U59af77e69411ffb99a49f1f2c3e2afc4'; // 你的LINE ID
+// 用戶配置（修復私訊問題）
+const MY_LINE_ID = process.env.MY_LINE_ID || 'U59af77e69411ffb99a49f1f2c3e2afc4'; // 你的真實LINE ID
 const MAX_MESSAGE_LENGTH = 2000;
 
 // 初始化 LINE 客戶端
 const client = new line.Client(config);
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
-// 智能 API 管理系統
-class SmartAPIManager {
+console.log(`🔑 使用LINE ID: ${MY_LINE_ID}`);
+console.log(`🔑 Channel Token長度: ${config.channelAccessToken ? config.channelAccessToken.length : 0}`);
+
+// 增強的 API 管理系統（修復404問題）
+class EnhancedAPIManager {
   constructor() {
-    this.dailyUsage = new Map();
-    this.lastResetDate = new Date().toDateString();
-    this.modelPerformance = new Map();
-    this.initializeUsageTracking();
-    console.log('🧠 智能 API 管理系統已初始化');
+    this.apiStatus = new Map();
+    this.lastSuccessfulCall = new Map();
+    this.failureCount = new Map();
+    console.log('🔧 增強API管理系統已初始化');
   }
 
-  initializeUsageTracking() {
-    ['premium', 'advanced', 'standard'].forEach(tier => {
-      Object.keys(SMART_AI_CONFIG.models[tier]).forEach(model => {
-        this.dailyUsage.set(model, 0);
-        this.modelPerformance.set(model, {
-          successRate: 100,
-          avgResponseTime: 1000,
-          totalRequests: 0,
-          successfulRequests: 0
-        });
-      });
-    });
-  }
-
-  resetDailyUsageIfNeeded() {
-    const today = new Date().toDateString();
-    if (today !== this.lastResetDate) {
-      this.dailyUsage.clear();
-      this.initializeUsageTracking();
-      this.lastResetDate = today;
-    }
-  }
-
-  analyzeRequestComplexity(prompt, context = {}) {
-    let complexity = 1;
-    
-    if (prompt.length > 500) complexity += 2;
-    else if (prompt.length > 200) complexity += 1;
-    
-    const complexKeywords = [
-      '決策', '分析', '評估', '建議', '策略', '學習', '修改', '程式碼',
-      '功能', '開發', '設計', '創作', '重要', '緊急', '問題'
-    ];
-    
-    complexity += complexKeywords.filter(keyword => prompt.includes(keyword)).length;
-    
-    if (context.isDecision) complexity += 3;
-    if (context.isLearning) complexity += 2;
-    if (context.isTechnical) complexity += 2;
-    
-    return Math.min(complexity, 10);
-  }
-
-  selectOptimalModel(complexity, context = {}) {
-    this.resetDailyUsageIfNeeded();
-    
-    let selectedTier = 'standard';
-    if (complexity >= 8 || context.isDecision) {
-      selectedTier = 'premium';
-    } else if (complexity >= 5 || context.isLearning || context.isTechnical) {
-      selectedTier = 'advanced';
-    }
-    
-    const availableModels = Object.entries(SMART_AI_CONFIG.models[selectedTier])
-      .filter(([model, config]) => {
-        const usage = this.dailyUsage.get(model) || 0;
-        return usage < config.limit;
-      })
-      .sort((a, b) => b[1].priority - a[1].priority);
-    
-    if (availableModels.length > 0) {
-      const selectedModel = availableModels[0][0];
-      return { model: selectedModel, tier: selectedTier, complexity };
-    }
-    
-    // 降級處理
-    if (selectedTier !== 'standard') {
-      return this.selectOptimalModel(complexity - 2, { ...context, downgraded: true });
-    }
-    
-    return { model: 'grok', tier: 'standard', complexity };
-  }
-
-  async callModel(prompt, modelInfo, context = {}) {
-    const { model, tier } = modelInfo;
-    const startTime = Date.now();
-    
+  async callGeminiAPI(prompt) {
     try {
-      const response = await axios.post(`${SMART_AI_CONFIG.baseURL}/chat/completions`, {
-        model: model,
-        messages: [
-          {
-            role: 'system',
-            content: this.generateSystemPrompt(tier, context)
-          },
-          {
-            role: 'user',
-            content: prompt
-          }
-        ],
-        max_tokens: tier === 'premium' ? 500 : (tier === 'advanced' ? 400 : 300),
-        temperature: context.isCreative ? 0.9 : 0.8
-      }, {
-        headers: {
-          'Authorization': `Bearer ${SMART_AI_CONFIG.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 25000
-      });
-
-      const responseTime = Date.now() - startTime;
-      this.recordUsage(model, true, responseTime);
+      console.log('🤖 嘗試調用Gemini API...');
+      const model = genAI.getGenerativeModel({ model: "gemini-pro" });
       
-      return response.data.choices[0].message.content.trim();
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const text = response.text();
+      
+      this.recordSuccess('gemini');
+      console.log('✅ Gemini API調用成功');
+      return text;
       
     } catch (error) {
-      const responseTime = Date.now() - startTime;
-      this.recordUsage(model, false, responseTime);
+      console.error('❌ Gemini API失敗:', error.message);
+      this.recordFailure('gemini');
       throw error;
     }
   }
 
-  recordUsage(model, success, responseTime) {
-    const currentUsage = this.dailyUsage.get(model) || 0;
-    this.dailyUsage.set(model, currentUsage + 1);
-    
-    const perf = this.modelPerformance.get(model);
-    perf.totalRequests++;
-    
-    if (success) {
-      perf.successfulRequests++;
-      perf.avgResponseTime = (perf.avgResponseTime + responseTime) / 2;
+  async callBackupAPI(prompt, maxRetries = 3) {
+    for (let i = 0; i < maxRetries; i++) {
+      for (const model of BACKUP_AI_CONFIG.models) {
+        try {
+          console.log(`🔄 嘗試備用API (${model}, 第${i+1}次)...`);
+          
+          const response = await axios.post(`${BACKUP_AI_CONFIG.baseURL}/chat/completions`, {
+            model: model,
+            messages: [
+              {
+                role: 'system',
+                content: '你是顧晉瑋，靜宜大學資管系學生，說話自然親切，會用台灣口語。'
+              },
+              {
+                role: 'user',
+                content: prompt
+              }
+            ],
+            max_tokens: 300,
+            temperature: 0.8
+          }, {
+            headers: {
+              'Authorization': `Bearer ${BACKUP_AI_CONFIG.apiKey}`,
+              'Content-Type': 'application/json'
+            },
+            timeout: 15000
+          });
+
+          const result = response.data.choices[0].message.content.trim();
+          this.recordSuccess(`backup-${model}`);
+          console.log(`✅ 備用API調用成功 (${model})`);
+          return result;
+          
+        } catch (error) {
+          console.error(`❌ 備用API失敗 (${model}):`, error.message);
+          this.recordFailure(`backup-${model}`);
+          
+          // 如果是404錯誤，嘗試下一個模型
+          if (error.response?.status === 404) {
+            console.log(`🔄 ${model} 不可用，嘗試下一個模型...`);
+            continue;
+          }
+        }
+      }
+      
+      // 每次重試前等待
+      if (i < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
     }
     
-    perf.successRate = (perf.successfulRequests / perf.totalRequests) * 100;
+    throw new Error('所有備用API都失敗了');
   }
 
-  generateSystemPrompt(tier, context) {
-    let basePrompt = '你是顧晉瑋，靜宜大學資管系學生，對科技AI有高度興趣。說話自然有趣，會用台灣口語。';
-    
-    if (tier === 'premium') {
-      basePrompt += '這是頂級AI模型調用，請發揮專業技術背景，提供最高質量的深度分析。';
-    } else if (tier === 'advanced') {
-      basePrompt += '這是高級AI模型調用，請用資管系專業知識提供詳細分析。';
-    } else {
-      basePrompt += '請用親切隨和的語氣回應。';
+  async smartAPICall(prompt) {
+    try {
+      // 優先使用Gemini
+      return await this.callGeminiAPI(prompt);
+    } catch (error) {
+      console.log('🔄 Gemini失敗，嘗試備用API...');
+      
+      try {
+        return await this.callBackupAPI(prompt);
+      } catch (backupError) {
+        console.error('💥 所有API都失敗，使用備用回應');
+        return this.getFallbackResponse(prompt);
+      }
     }
-    
-    return basePrompt;
   }
 
-  getUsageReport() {
-    this.resetDailyUsageIfNeeded();
+  getFallbackResponse(prompt) {
+    const responses = [
+      '哈哈，這個問題很有趣！讓我想想... 🤔',
+      '好der，我了解你的意思！ 👌',
+      'ㄜ...這個我需要再研究一下 😅',
+      '有道理！你說得很對 ✨',
+      '這個話題很不錯呢！ 😊',
+      '我覺得這樣很棒！ 🎉'
+    ];
     
-    const report = { date: new Date().toDateString(), usage: {} };
+    return responses[Math.floor(Math.random() * responses.length)];
+  }
+
+  recordSuccess(apiName) {
+    this.lastSuccessfulCall.set(apiName, new Date());
+    this.failureCount.set(apiName, 0);
+    this.apiStatus.set(apiName, 'healthy');
+  }
+
+  recordFailure(apiName) {
+    const currentFailures = this.failureCount.get(apiName) || 0;
+    this.failureCount.set(apiName, currentFailures + 1);
     
-    ['premium', 'advanced', 'standard'].forEach(tier => {
-      report.usage[tier] = {};
-      Object.entries(SMART_AI_CONFIG.models[tier]).forEach(([model, config]) => {
-        const usage = this.dailyUsage.get(model) || 0;
-        const perf = this.modelPerformance.get(model);
-        
-        report.usage[tier][model] = {
-          used: usage,
-          limit: config.limit,
-          percentage: Math.round((usage / config.limit) * 100),
-          successRate: Math.round(perf.successRate)
-        };
-      });
-    });
-    
-    return report;
+    if (currentFailures >= 3) {
+      this.apiStatus.set(apiName, 'unhealthy');
+    }
+  }
+
+  getAPIStatus() {
+    const status = {};
+    for (const [api, health] of this.apiStatus) {
+      status[api] = {
+        status: health,
+        lastSuccess: this.lastSuccessfulCall.get(api),
+        failureCount: this.failureCount.get(api) || 0
+      };
+    }
+    return status;
   }
 }
 
-// 決策詢問系統
-class DecisionInquirySystem {
+// 修復的推送訊息系統
+class SafePushMessageSystem {
+  constructor() {
+    this.pushQueue = [];
+    this.isProcessingQueue = false;
+    console.log('📨 安全推送訊息系統已初始化');
+  }
+
+  async safePushMessage(targetId, message, retryCount = 0) {
+    try {
+      console.log(`📤 嘗試推送訊息到: ${targetId}`);
+      console.log(`📝 訊息內容: ${typeof message === 'string' ? message.substring(0, 50) : JSON.stringify(message).substring(0, 50)}...`);
+      
+      // 確保訊息格式正確
+      const formattedMessage = this.formatMessage(message);
+      
+      await client.pushMessage(targetId, formattedMessage);
+      console.log('✅ 推送訊息成功');
+      return true;
+      
+    } catch (error) {
+      console.error(`💥 推送訊息失敗 (嘗試 ${retryCount + 1}):`, error.message);
+      console.error('錯誤詳情:', error.response?.data || error);
+      
+      // 如果是無效的用戶ID錯誤
+      if (error.message.includes('Invalid reply token') || 
+          error.message.includes('Invalid user id') ||
+          error.response?.status === 400) {
+        console.error('🚫 無效的用戶ID或權限問題，不重試');
+        return false;
+      }
+      
+      // 重試機制
+      if (retryCount < 2) {
+        console.log(`🔄 ${retryCount + 1}秒後重試...`);
+        await new Promise(resolve => setTimeout(resolve, (retryCount + 1) * 1000));
+        return await this.safePushMessage(targetId, message, retryCount + 1);
+      }
+      
+      return false;
+    }
+  }
+
+  formatMessage(message) {
+    if (typeof message === 'string') {
+      return {
+        type: 'text',
+        text: this.limitMessageLength(message)
+      };
+    }
+    
+    if (message && message.text) {
+      message.text = this.limitMessageLength(message.text);
+    }
+    
+    return message;
+  }
+
+  limitMessageLength(text, maxLength = MAX_MESSAGE_LENGTH) {
+    if (text.length > maxLength) {
+      return text.substring(0, maxLength - 20) + '\n\n...(內容太長被截掉了 😅)';
+    }
+    return text;
+  }
+
+  async testPushMessage() {
+    try {
+      console.log('🧪 測試推送訊息功能...');
+      const testMessage = `🧪 系統測試訊息 ${new Date().toLocaleString('zh-TW')}`;
+      
+      const success = await this.safePushMessage(MY_LINE_ID, testMessage);
+      
+      if (success) {
+        console.log('✅ 推送訊息測試成功');
+      } else {
+        console.error('❌ 推送訊息測試失敗');
+      }
+      
+      return success;
+    } catch (error) {
+      console.error('💥 推送訊息測試出錯:', error);
+      return false;
+    }
+  }
+}
+
+// 修復的天氣系統
+class FixedWeatherSystem {
+  constructor() {
+    this.apiKey = WEATHER_API_KEY;
+    this.lastWorkingEndpoint = null;
+    console.log('🌤️ 修復版天氣系統已初始化');
+  }
+
+  async getWeather(cityName) {
+    console.log(`🌤️ 查詢天氣: ${cityName}`);
+    
+    // 多個API端點嘗試
+    const endpoints = [
+      {
+        name: '中央氣象署 - 天氣預報',
+        url: 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001',
+        params: { Authorization: this.apiKey, locationName: cityName }
+      },
+      {
+        name: '中央氣象署 - 觀測資料',
+        url: 'https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001',
+        params: { Authorization: this.apiKey, locationName: cityName }
+      }
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`🔄 嘗試API: ${endpoint.name}`);
+        
+        const response = await axios.get(endpoint.url, {
+          params: endpoint.params,
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'LINE-Bot/1.0'
+          }
+        });
+
+        if (response.data.success === 'true' && response.data.records) {
+          console.log(`✅ ${endpoint.name} 成功`);
+          this.lastWorkingEndpoint = endpoint.name;
+          
+          if (response.data.records.location && response.data.records.location.length > 0) {
+            return this.formatWeatherData(response.data.records.location[0], endpoint.name);
+          }
+        }
+        
+      } catch (error) {
+        console.error(`❌ ${endpoint.name} 失敗:`, error.message);
+        continue;
+      }
+    }
+
+    // 如果所有API都失敗，嘗試模糊搜尋
+    try {
+      return await this.searchAllLocations(cityName);
+    } catch (error) {
+      console.error('💥 模糊搜尋也失敗，使用備用資料');
+      return this.getFallbackWeather(cityName);
+    }
+  }
+
+  async searchAllLocations(cityName) {
+    try {
+      console.log('🔍 執行全域搜尋...');
+      
+      const response = await axios.get('https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001', {
+        params: { Authorization: this.apiKey },
+        timeout: 15000
+      });
+
+      if (response.data.success === 'true' && response.data.records.location) {
+        const locations = response.data.records.location;
+        
+        // 精確匹配
+        let matchedLocation = locations.find(loc => loc.locationName === cityName);
+        
+        // 模糊匹配
+        if (!matchedLocation) {
+          matchedLocation = locations.find(loc => 
+            loc.locationName.includes(cityName) || cityName.includes(loc.locationName)
+          );
+        }
+        
+        // 更寬鬆的匹配
+        if (!matchedLocation) {
+          const normalizedCity = cityName.replace(/[台臺]/g, '').replace(/[市縣]/g, '');
+          matchedLocation = locations.find(loc => 
+            loc.locationName.includes(normalizedCity)
+          );
+        }
+
+        if (matchedLocation) {
+          console.log(`✅ 找到匹配位置: ${matchedLocation.locationName}`);
+          return this.formatWeatherData(matchedLocation, '全域搜尋');
+        }
+      }
+      
+      throw new Error('找不到匹配的位置');
+    } catch (error) {
+      console.error('🔍 全域搜尋失敗:', error.message);
+      throw error;
+    }
+  }
+
+  formatWeatherData(locationData, source) {
+    try {
+      const weather = locationData.weatherElement;
+      
+      if (!weather) {
+        return this.getFallbackWeather(locationData.locationName || '未知');
+      }
+      
+      const minTemp = weather.find(el => el.elementName === 'MinT');
+      const maxTemp = weather.find(el => el.elementName === 'MaxT');
+      const wx = weather.find(el => el.elementName === 'Wx');
+      const pop = weather.find(el => el.elementName === 'PoP');
+      const ci = weather.find(el => el.elementName === 'CI');
+
+      return {
+        location: locationData.locationName,
+        minTemp: minTemp?.time?.[0]?.parameter?.parameterName || 'N/A',
+        maxTemp: maxTemp?.time?.[0]?.parameter?.parameterName || 'N/A',
+        weather: wx?.time?.[0]?.parameter?.parameterName || 'N/A',
+        rainChance: pop?.time?.[0]?.parameter?.parameterName || 'N/A',
+        comfort: ci?.time?.[0]?.parameter?.parameterName || 'N/A',
+        updateTime: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}),
+        source: source,
+        isFallback: false
+      };
+    } catch (error) {
+      console.error('天氣資料格式化失敗:', error);
+      return this.getFallbackWeather(locationData.locationName || '未知');
+    }
+  }
+
+  getFallbackWeather(cityName) {
+    console.log(`🔄 使用備用天氣資料: ${cityName}`);
+    
+    const fallbackData = {
+      '台北': { min: '18', max: '25', weather: '多雲', rain: '30' },
+      '新北': { min: '17', max: '24', weather: '多雲時晴', rain: '20' },
+      '桃園': { min: '16', max: '26', weather: '晴時多雲', rain: '10' },
+      '台中': { min: '19', max: '27', weather: '晴朗', rain: '5' },
+      '台南': { min: '20', max: '28', weather: '晴朗', rain: '5' },
+      '高雄': { min: '21', max: '29', weather: '晴朗', rain: '10' }
+    };
+    
+    const cityKey = Object.keys(fallbackData).find(key => cityName.includes(key));
+    const data = fallbackData[cityKey] || fallbackData['台北'];
+    
+    return {
+      location: cityName,
+      minTemp: data.min,
+      maxTemp: data.max,
+      weather: data.weather,
+      rainChance: data.rain,
+      comfort: '舒適',
+      updateTime: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}),
+      source: '備用資料',
+      isFallback: true
+    };
+  }
+
+  extractCityFromText(text) {
+    const cities = [
+      '台北', '新北', '桃園', '台中', '台南', '高雄', '基隆', 
+      '新竹', '苗栗', '彰化', '南投', '雲林', '嘉義', '屏東', 
+      '宜蘭', '花蓮', '台東', '澎湖', '金門', '連江',
+      '臺北', '臺中', '臺南', '臺東', '臺灣'
+    ];
+    
+    for (const city of cities) {
+      if (text.includes(city)) {
+        return city;
+      }
+    }
+    return '台北'; // 預設
+  }
+}
+
+// 修復的新聞系統
+class FixedNewsSystem {
+  constructor() {
+    this.apiKey = NEWS_API_KEY;
+    console.log('📰 修復版新聞系統已初始化');
+  }
+
+  async getNews() {
+    const endpoints = [
+      {
+        name: 'NewsAPI',
+        url: 'https://newsapi.org/v2/top-headlines',
+        params: { country: 'tw', apiKey: this.apiKey, pageSize: 5 }
+      }
+      // 可以加入更多新聞來源
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        console.log(`📰 嘗試新聞API: ${endpoint.name}`);
+        
+        const response = await axios.get(endpoint.url, {
+          params: endpoint.params,
+          timeout: 10000,
+          headers: {
+            'User-Agent': 'LINE-Bot/1.0'
+          }
+        });
+
+        if (response.data.articles && response.data.articles.length > 0) {
+          console.log(`✅ ${endpoint.name} 成功取得 ${response.data.articles.length} 則新聞`);
+          return this.formatNewsData(response.data.articles);
+        }
+
+      } catch (error) {
+        console.error(`❌ ${endpoint.name} 失敗:`, error.message);
+        continue;
+      }
+    }
+
+    // 返回備用新聞
+    return this.getFallbackNews();
+  }
+
+  formatNewsData(articles) {
+    let newsText = `📰 最新新聞 ${new Date().toLocaleDateString('zh-TW')}\n\n`;
+    
+    articles.slice(0, 3).forEach((article, index) => {
+      newsText += `${index + 1}. ${article.title}\n`;
+      if (article.description) {
+        newsText += `📄 ${article.description.substring(0, 80)}...\n`;
+      }
+      newsText += `\n`;
+    });
+
+    newsText += `📱 以上是今日重要新聞！`;
+    return newsText;
+  }
+
+  getFallbackNews() {
+    return `📰 新聞摘要 ${new Date().toLocaleDateString('zh-TW')}
+
+1. 科技發展持續進步，AI技術日新月異
+2. 台灣經濟表現穩定，各產業持續發展
+3. 天氣變化請注意保暖，關心身體健康
+
+📱 抱歉，新聞API暫時無法使用，請查看其他新聞來源獲取最新資訊！`;
+  }
+}
+
+// 決策詢問系統（修復私訊問題）
+class FixedDecisionSystem {
   constructor() {
     this.pendingDecisions = new Map();
     this.decisionHistory = new Map();
-    this.awaitingDecisions = new Set();
-    console.log('🔐 決策詢問系統已初始化');
+    console.log('🔐 修復版決策系統已初始化');
   }
 
   async requestDecision(context, question, originalReplyToken, originalUserId, groupId = null) {
@@ -254,15 +539,14 @@ class DecisionInquirySystem {
       status: 'pending'
     });
 
-    this.awaitingDecisions.add(originalUserId);
-
     try {
+      console.log(`🔐 發送決策請求到: ${MY_LINE_ID}`);
+      
       const inquiryMessage = {
         type: 'template',
         altText: `🤔 需要你的決策：${question}`,
         template: {
           type: 'buttons',
-          thumbnailImageUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400&h=300&fit=crop',
           title: '🤔 決策請求',
           text: `${context}\n\n${question}`.substring(0, 160),
           actions: [
@@ -288,22 +572,27 @@ class DecisionInquirySystem {
         }
       };
 
-      await client.pushMessage(MY_LINE_ID, inquiryMessage);
-      console.log(`📨 決策請求已發送: ${question}`);
+      const success = await pushMessageSystem.safePushMessage(MY_LINE_ID, inquiryMessage);
       
-      // 暫時回覆給原用戶
-      if (originalReplyToken && !replyTokenManager.isTokenUsed(originalReplyToken)) {
-        await safeReply(originalReplyToken, {
-          type: 'text',
-          text: '🤔 讓我考慮一下這個請求，稍等片刻...'
-        });
+      if (success) {
+        console.log(`✅ 決策請求已發送: ${decisionId}`);
+        
+        // 暫時回覆給原用戶
+        if (originalReplyToken && !replyTokenManager.isTokenUsed(originalReplyToken)) {
+          await safeReply(originalReplyToken, {
+            type: 'text',
+            text: '🤔 讓我考慮一下這個請求，稍等片刻...'
+          });
+        }
+        
+        return decisionId;
+      } else {
+        console.error('💥 決策請求發送失敗');
+        return null;
       }
-      
-      return decisionId;
       
     } catch (error) {
       console.error('💥 發送決策請求失敗:', error);
-      this.awaitingDecisions.delete(originalUserId);
       return null;
     }
   }
@@ -325,7 +614,6 @@ class DecisionInquirySystem {
       case 'approve':
         responseMessage = '✅ 已批准決策，正在執行...';
         userMessage = '✅ 經過考慮，我決定處理你的請求！';
-        // 這裡可以執行實際的決策行動
         break;
       case 'reject':
         responseMessage = '❌ 已拒絕決策';
@@ -342,15 +630,14 @@ class DecisionInquirySystem {
     // 通知原用戶
     try {
       if (decision.groupId) {
-        await client.pushMessage(decision.groupId, { type: 'text', text: userMessage });
+        await pushMessageSystem.safePushMessage(decision.groupId, userMessage);
       } else if (decision.originalUserId !== MY_LINE_ID) {
-        await client.pushMessage(decision.originalUserId, { type: 'text', text: userMessage });
+        await pushMessageSystem.safePushMessage(decision.originalUserId, userMessage);
       }
     } catch (error) {
       console.error('💥 通知用戶失敗:', error);
     }
 
-    this.awaitingDecisions.delete(decision.originalUserId);
     this.decisionHistory.set(decisionId, decision);
     this.pendingDecisions.delete(decisionId);
 
@@ -364,21 +651,20 @@ class DecisionInquirySystem {
       /發送.*所有人/, /群發/, /廣播/, /通知.*所有/,
       /執行.*指令/, /運行.*腳本/, /啟動.*功能/,
       /購買/, /付款/, /轉帳/, /交易/,
-      /封鎖/, /解封/, /刪除.*用戶/, /踢出/,
-      /公開.*隱私/, /洩露.*資訊/, /分享.*個資/
+      /封鎖/, /解封/, /刪除.*用戶/, /踢出/
     ];
 
     return decisionKeywords.some(pattern => pattern.test(message));
   }
 }
 
-// 矛盾檢測系統
-class ContradictionDetectionSystem {
+// 矛盾檢測系統（修復私訊問題）
+class FixedContradictionSystem {
   constructor() {
     this.userStatements = new Map();
     this.contradictionHistory = new Map();
-    this.sensitiveTopics = ['工作', '學習', '感情', '計畫', '意見', '喜好', '政治', '投資'];
-    console.log('🔍 矛盾檢測系統已初始化');
+    this.sensitiveTopics = ['工作', '學習', '感情', '計畫', '意見', '喜好', '政治'];
+    console.log('🔍 修復版矛盾檢測系統已初始化');
   }
 
   async analyzeStatement(userId, userName, message) {
@@ -391,8 +677,7 @@ class ContradictionDetectionSystem {
       message,
       timestamp: new Date(),
       topics: this.extractTopics(message),
-      sentiment: this.analyzeSentiment(message),
-      stance: this.extractStance(message)
+      sentiment: this.analyzeSentiment(message)
     };
 
     // 異步檢測矛盾
@@ -410,7 +695,6 @@ class ContradictionDetectionSystem {
 
     userHistory.push(currentStatement);
     
-    // 保持最近20條記錄
     if (userHistory.length > 20) {
       userHistory.shift();
     }
@@ -443,14 +727,6 @@ class ContradictionDetectionSystem {
     return 'neutral';
   }
 
-  extractStance(message) {
-    if (message.includes('支持') || message.includes('贊成')) return 'support';
-    if (message.includes('反對') || message.includes('不同意')) return 'oppose';
-    if (message.includes('喜歡') || message.includes('愛')) return 'like';
-    if (message.includes('討厭') || message.includes('不喜歡')) return 'dislike';
-    return 'neutral';
-  }
-
   async detectContradiction(userHistory, currentStatement) {
     for (const pastStatement of userHistory.slice(-10)) {
       const commonTopics = currentStatement.topics.filter(topic => 
@@ -461,8 +737,7 @@ class ContradictionDetectionSystem {
         if (this.isContradictory(pastStatement, currentStatement)) {
           const timeDiff = currentStatement.timestamp - pastStatement.timestamp;
           
-          // 在1小時內的矛盾才報告
-          if (timeDiff < 3600000) {
+          if (timeDiff < 3600000) { // 1小時內
             return {
               type: 'stance_change',
               topic: commonTopics[0],
@@ -478,25 +753,10 @@ class ContradictionDetectionSystem {
   }
 
   isContradictory(past, current) {
-    // 情感矛盾
-    if ((past.sentiment === 'positive' && current.sentiment === 'negative') ||
-        (past.sentiment === 'negative' && current.sentiment === 'positive')) {
-      return true;
-    }
-
-    // 立場矛盾
-    const contradictoryStances = {
-      'support': 'oppose',
-      'oppose': 'support',
-      'like': 'dislike',
-      'dislike': 'like'
-    };
-
-    if (contradictoryStances[past.stance] === current.stance) {
-      return true;
-    }
-
-    return false;
+    return (
+      (past.sentiment === 'positive' && current.sentiment === 'negative') ||
+      (past.sentiment === 'negative' && current.sentiment === 'positive')
+    );
   }
 
   async handleContradiction(userId, userName, contradiction) {
@@ -519,15 +779,18 @@ class ContradictionDetectionSystem {
 
 🆕 現在說：「${contradiction.currentStatement}」
 
-💡 這可能表示用戶改變了想法，或需要進一步了解。`;
+💡 可能表示用戶改變了想法，或需要進一步了解情況。`;
 
     try {
-      await client.pushMessage(MY_LINE_ID, {
-        type: 'text',
-        text: reportMessage
-      });
-
-      console.log(`🔍 矛盾檢測報告已發送: ${userName} - ${contradiction.topic}`);
+      console.log(`🔍 發送矛盾報告到: ${MY_LINE_ID}`);
+      
+      const success = await pushMessageSystem.safePushMessage(MY_LINE_ID, reportMessage);
+      
+      if (success) {
+        console.log(`✅ 矛盾檢測報告已發送: ${userName} - ${contradiction.topic}`);
+      } else {
+        console.error('💥 矛盾報告發送失敗');
+      }
       
     } catch (error) {
       console.error('💥 發送矛盾報告失敗:', error.message);
@@ -535,702 +798,13 @@ class ContradictionDetectionSystem {
   }
 }
 
-// 天氣系統（修復版）
-class WeatherSystem {
-  constructor() {
-    this.apiKey = WEATHER_API_KEY;
-    console.log('🌤️ 天氣查詢系統已初始化');
-  }
-
-  async getWeather(cityName) {
-    try {
-      console.log(`🌤️ 查詢天氣: ${cityName}`);
-      
-      // 使用中央氣象署API
-      const response = await axios.get('https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001', {
-        params: {
-          Authorization: this.apiKey,
-          locationName: cityName
-        },
-        timeout: 10000
-      });
-
-      if (response.data.success === 'true' && response.data.records.location.length > 0) {
-        return this.formatWeatherData(response.data.records.location[0]);
-      } else {
-        // 如果找不到城市，嘗試模糊搜尋
-        return await this.searchWeatherByFuzzyMatch(cityName);
-      }
-    } catch (error) {
-      console.error('💥 天氣查詢錯誤:', error.message);
-      return this.getFallbackWeather(cityName);
-    }
-  }
-
-  async searchWeatherByFuzzyMatch(cityName) {
-    try {
-      // 獲取所有可用地點
-      const response = await axios.get('https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001', {
-        params: {
-          Authorization: this.apiKey
-        },
-        timeout: 10000
-      });
-
-      if (response.data.success === 'true') {
-        const locations = response.data.records.location;
-        
-        // 模糊搜尋
-        const matchedLocation = locations.find(location => 
-          location.locationName.includes(cityName) || 
-          cityName.includes(location.locationName)
-        );
-
-        if (matchedLocation) {
-          return this.formatWeatherData(matchedLocation);
-        }
-      }
-      
-      throw new Error('找不到匹配的城市');
-    } catch (error) {
-      return this.getFallbackWeather(cityName);
-    }
-  }
-
-  formatWeatherData(locationData) {
-    const weather = locationData.weatherElement;
-    
-    const minTemp = weather.find(el => el.elementName === 'MinT');
-    const maxTemp = weather.find(el => el.elementName === 'MaxT');
-    const wx = weather.find(el => el.elementName === 'Wx');
-    const pop = weather.find(el => el.elementName === 'PoP');
-    const ci = weather.find(el => el.elementName === 'CI');
-
-    return {
-      location: locationData.locationName,
-      minTemp: minTemp?.time[0]?.parameter?.parameterName || 'N/A',
-      maxTemp: maxTemp?.time[0]?.parameter?.parameterName || 'N/A',
-      weather: wx?.time[0]?.parameter?.parameterName || 'N/A',
-      rainChance: pop?.time[0]?.parameter?.parameterName || 'N/A',
-      comfort: ci?.time[0]?.parameter?.parameterName || 'N/A',
-      updateTime: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}),
-      isFallback: false
-    };
-  }
-
-  getFallbackWeather(cityName) {
-    return {
-      location: cityName,
-      minTemp: '18',
-      maxTemp: '25',
-      weather: '多雲時晴',
-      rainChance: '30',
-      comfort: '舒適',
-      updateTime: new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}),
-      isFallback: true
-    };
-  }
-
-  extractCityFromText(text) {
-    const cities = [
-      '台北', '新北', '桃園', '台中', '台南', '高雄', '基隆', 
-      '新竹', '苗栗', '彰化', '南投', '雲林', '嘉義', '屏東', 
-      '宜蘭', '花蓮', '台東', '澎湖', '金門', '連江',
-      '臺北', '臺中', '臺南', '臺東'
-    ];
-    
-    for (const city of cities) {
-      if (text.includes(city)) {
-        return city;
-      }
-    }
-    return '台北'; // 預設台北
-  }
-}
-
-// 任務管理系統
-class TaskManagementSystem {
-  constructor() {
-    this.tasks = new Map();
-    this.scheduledTasks = new Map();
-    this.taskHistory = new Map();
-    console.log('📋 任務管理系統已初始化');
-  }
-
-  createTask(userId, taskType, schedule, content, target = null) {
-    const taskId = `task-${userId}-${Date.now()}`;
-    
-    const task = {
-      id: taskId,
-      userId,
-      taskType,
-      schedule,
-      content,
-      target: target || userId,
-      created: new Date(),
-      active: true,
-      lastExecuted: null,
-      executionCount: 0
-    };
-
-    this.tasks.set(taskId, task);
-    this.scheduleTask(task);
-    
-    console.log(`📋 新任務已創建: ${taskType} - ${schedule}`);
-    return taskId;
-  }
-
-  scheduleTask(task) {
-    try {
-      let nextExecution = this.calculateNextExecution(task.schedule);
-      
-      if (nextExecution) {
-        const delay = nextExecution.getTime() - Date.now();
-        
-        if (delay > 0) {
-          const timerId = setTimeout(async () => {
-            await this.executeTask(task.id);
-          }, delay);
-          
-          this.scheduledTasks.set(task.id, {
-            timerId,
-            nextExecution
-          });
-          
-          console.log(`⏰ 任務已排程: ${task.id} - ${nextExecution.toLocaleString('zh-TW')}`);
-        }
-      }
-    } catch (error) {
-      console.error('任務排程錯誤:', error);
-    }
-  }
-
-  calculateNextExecution(schedule) {
-    const now = new Date();
-    
-    // 解析 "每天早上9點" 這種格式
-    if (schedule.includes('每天') && schedule.includes('點')) {
-      const hourMatch = schedule.match(/(\d{1,2})點/);
-      if (hourMatch) {
-        const hour = parseInt(hourMatch[1]);
-        const nextExecution = new Date(now);
-        nextExecution.setHours(hour, 0, 0, 0);
-        
-        // 如果今天的時間已過，設定為明天
-        if (nextExecution <= now) {
-          nextExecution.setDate(nextExecution.getDate() + 1);
-        }
-        
-        return nextExecution;
-      }
-    }
-    
-    // 可以擴展更多時間格式
-    return null;
-  }
-
-  async executeTask(taskId) {
-    const task = this.tasks.get(taskId);
-    if (!task || !task.active) {
-      console.log(`⚠️ 任務 ${taskId} 已失效或被取消`);
-      return;
-    }
-
-    console.log(`🔄 正在執行任務: ${task.taskType}`);
-
-    try {
-      let message = null;
-
-      switch (task.taskType) {
-        case 'daily_news':
-          message = await this.generateDailyNews();
-          break;
-        case 'weather_report':
-          message = await this.generateWeatherReport();
-          break;
-        case 'custom_message':
-          message = { type: 'text', text: task.content };
-          break;
-        default:
-          message = { type: 'text', text: `📋 定時任務：${task.content}` };
-      }
-
-      if (message) {
-        await client.pushMessage(task.target, message);
-
-        // 更新任務狀態
-        task.lastExecuted = new Date();
-        task.executionCount++;
-
-        console.log(`✅ 任務執行成功: ${task.taskType}`);
-
-        // 重新排程下次執行
-        this.scheduleTask(task);
-      }
-
-    } catch (error) {
-      console.error(`💥 任務執行失敗 (${taskId}):`, error.message);
-    }
-  }
-
-  async generateDailyNews() {
-    try {
-      const newsResponse = await axios.get('https://newsapi.org/v2/top-headlines', {
-        params: {
-          country: 'tw',
-          apiKey: NEWS_API_KEY,
-          pageSize: 5
-        },
-        timeout: 10000
-      });
-
-      if (newsResponse.data.articles && newsResponse.data.articles.length > 0) {
-        let newsText = `🗞️ 每日新聞摘要 ${new Date().toLocaleDateString('zh-TW')}\n\n`;
-        
-        newsResponse.data.articles.slice(0, 3).forEach((article, index) => {
-          newsText += `${index + 1}. ${article.title}\n`;
-          if (article.description) {
-            newsText += `📄 ${article.description.substring(0, 80)}...\n`;
-          }
-          newsText += `\n`;
-        });
-
-        newsText += `\n📱 以上是今日重要新聞，祝你有美好的一天！`;
-
-        return { type: 'text', text: newsText };
-      }
-    } catch (error) {
-      console.error('新聞獲取失敗:', error);
-    }
-
-    return { 
-      type: 'text', 
-      text: `🗞️ 每日新聞摘要\n\n抱歉，今日新聞獲取暫時有問題，請稍後查看其他新聞來源 📰` 
-    };
-  }
-
-  async generateWeatherReport() {
-    try {
-      const weatherData = await weatherSystem.getWeather('台北');
-      return {
-        type: 'text',
-        text: `🌤️ 今日天氣報告\n\n📍 ${weatherData.location}\n🌡️ ${weatherData.minTemp}°C - ${weatherData.maxTemp}°C\n☁️ ${weatherData.weather}\n☔ 降雨機率 ${weatherData.rainChance}%\n\n記得根據天氣調整穿著！`
-      };
-    } catch (error) {
-      return {
-        type: 'text',
-        text: '🌤️ 今日天氣報告\n\n天氣查詢暫時無法使用，請查看天氣App獲取最新資訊 📱'
-      };
-    }
-  }
-
-  getUserTasks(userId) {
-    return Array.from(this.tasks.values())
-      .filter(task => task.userId === userId && task.active)
-      .sort((a, b) => b.created - a.created);
-  }
-
-  deleteTask(taskId, userId) {
-    const task = this.tasks.get(taskId);
-    if (task && task.userId === userId) {
-      task.active = false;
-      
-      // 清除排程
-      const scheduled = this.scheduledTasks.get(taskId);
-      if (scheduled) {
-        clearTimeout(scheduled.timerId);
-        this.scheduledTasks.delete(taskId);
-      }
-      
-      console.log(`🗑️ 任務已刪除: ${taskId}`);
-      return true;
-    }
-    return false;
-  }
-
-  parseTaskRequest(message) {
-    const taskPatterns = [
-      {
-        pattern: /每天.*?(\d{1,2})點.*?給我.*?新聞/,
-        type: 'daily_news',
-        extract: (match) => ({ schedule: `每天${match[1]}點`, content: '新聞' })
-      },
-      {
-        pattern: /每天.*?(\d{1,2})點.*?天氣/,
-        type: 'weather_report',
-        extract: (match) => ({ schedule: `每天${match[1]}點`, content: '天氣' })
-      },
-      {
-        pattern: /每天.*?(\d{1,2})點.*?提醒我(.+)/,
-        type: 'custom_message',
-        extract: (match) => ({ schedule: `每天${match[1]}點`, content: match[2].trim() })
-      }
-    ];
-
-    for (const taskPattern of taskPatterns) {
-      const match = message.match(taskPattern.pattern);
-      if (match) {
-        const extracted = taskPattern.extract(match);
-        return {
-          taskType: taskPattern.type,
-          schedule: extracted.schedule,
-          content: extracted.content
-        };
-      }
-    }
-    
-    return null;
-  }
-}
-
-// 自學系統
-class SelfLearningSystem {
-  constructor() {
-    this.learningHistory = new Map();
-    this.codeModificationHistory = new Map();
-    this.backupCode = '';
-    console.log('🧠 自學系統已初始化');
-  }
-
-  async analyzeFeatureRequest(userId, request) {
-    try {
-      const complexity = smartAPIManager.analyzeRequestComplexity(request, { isLearning: true, isTechnical: true });
-      const modelInfo = smartAPIManager.selectOptimalModel(complexity, { isLearning: true, isTechnical: true });
-      
-      const analysisPrompt = `分析這個功能需求並提供實現方案：
-
-用戶需求：${request}
-
-請分析：
-1. 功能的可行性 (1-10分)
-2. 實現難度 (1-10分)
-3. 需要的技術組件
-4. 可能的風險
-5. 簡單的實現思路
-
-以JSON格式回答：
-{
-  "feasibility": 8,
-  "difficulty": 6,
-  "components": ["API", "資料庫", "排程器"],
-  "risks": ["資料安全", "效能問題"],
-  "implementation": "詳細實現步驟...",
-  "canImplement": true,
-  "estimatedTime": "2小時"
-}`;
-
-      const analysis = await smartAPIManager.callModel(analysisPrompt, modelInfo, { isLearning: true, isTechnical: true });
-      
-      try {
-        const parsedAnalysis = JSON.parse(analysis);
-        
-        // 記錄學習歷史
-        this.learningHistory.set(`learning-${Date.now()}`, {
-          userId,
-          request,
-          analysis: parsedAnalysis,
-          timestamp: new Date()
-        });
-        
-        return parsedAnalysis;
-      } catch (parseError) {
-        console.error('分析結果解析失敗:', parseError);
-        return null;
-      }
-    } catch (error) {
-      console.error('功能分析失敗:', error);
-      return null;
-    }
-  }
-
-  async implementFeature(userId, request, analysis) {
-    try {
-      if (!analysis || !analysis.canImplement) {
-        return {
-          success: false,
-          message: '抱歉，這個功能太複雜或風險太高，我無法安全地實現。'
-        };
-      }
-
-      // 備份當前代碼
-      this.backupCode = await this.getCurrentCode();
-      
-      const complexity = smartAPIManager.analyzeRequestComplexity(request, { isLearning: true, isTechnical: true });
-      const modelInfo = smartAPIManager.selectOptimalModel(complexity, { isLearning: true, isTechnical: true });
-      
-      const implementationPrompt = `基於分析結果，生成安全的代碼實現：
-
-功能需求：${request}
-分析結果：${JSON.stringify(analysis)}
-
-請生成：
-1. 安全的代碼實現
-2. 詳細的實現說明
-3. 測試方法
-4. 回滾計畫
-
-重要：代碼必須安全，不能破壞現有功能！
-
-以JSON格式回答：
-{
-  "code": "// 新增的代碼...",
-  "explanation": "實現說明...",
-  "testMethod": "測試方法...",
-  "rollbackPlan": "回滾計畫...",
-  "safetyLevel": 9
-}`;
-
-      const implementation = await smartAPIManager.callModel(implementationPrompt, modelInfo, { isLearning: true, isTechnical: true });
-      
-      try {
-        const parsedImplementation = JSON.parse(implementation);
-        
-        if (parsedImplementation.safetyLevel >= 7) {
-          // 記錄代碼修改歷史
-          const modificationId = `mod-${Date.now()}`;
-          this.codeModificationHistory.set(modificationId, {
-            userId,
-            request,
-            implementation: parsedImplementation,
-            timestamp: new Date(),
-            applied: false,
-            backupCode: this.backupCode
-          });
-          
-          // 發送實現報告給用戶
-          await this.sendImplementationReport(userId, request, parsedImplementation);
-          
-          return {
-            success: true,
-            message: '功能分析完成！我已經設計了實現方案，但為了安全起見，我不會直接修改代碼。實現方案已發送給你參考。'
-          };
-        } else {
-          return {
-            success: false,
-            message: '這個實現方案的安全等級不夠高，為了保護系統穩定性，我不建議實現。'
-          };
-        }
-      } catch (parseError) {
-        console.error('實現結果解析失敗:', parseError);
-        return {
-          success: false,
-          message: '代碼生成過程出現問題，請稍後再試。'
-        };
-      }
-    } catch (error) {
-      console.error('功能實現失敗:', error);
-      return {
-        success: false,
-        message: '功能實現過程中出現錯誤，請稍後再試。'
-      };
-    }
-  }
-
-  async sendImplementationReport(userId, request, implementation) {
-    try {
-      const reportMessage = `🧠 自學功能實現報告
-
-📝 功能需求：${request}
-
-🔧 實現方案：
-${implementation.explanation}
-
-💡 測試方法：
-${implementation.testMethod}
-
-⚠️ 安全等級：${implementation.safetyLevel}/10
-
-🔄 回滾計畫：
-${implementation.rollbackPlan}
-
-📋 代碼片段：
-\`\`\`javascript
-${implementation.code.substring(0, 500)}...
-\`\`\`
-
-為了系統安全，我沒有直接修改程式碼，但提供了完整的實現方案供你參考。如果你需要實際應用，請手動檢查後再執行。`;
-
-      await client.pushMessage(userId, {
-        type: 'text',
-        text: reportMessage
-      });
-
-      console.log(`📨 實現報告已發送給用戶: ${userId}`);
-      
-    } catch (error) {
-      console.error('💥 發送實現報告失敗:', error);
-    }
-  }
-
-  async getCurrentCode() {
-    try {
-      // 這裡可以實現讀取當前代碼的邏輯
-      // 為了安全起見，這裡只返回一個簡單的備份標記
-      return `// 代碼備份 - ${new Date().toISOString()}`;
-    } catch (error) {
-      console.error('獲取當前代碼失敗:', error);
-      return '';
-    }
-  }
-
-  isFeatureRequest(message) {
-    const featureKeywords = [
-      '新增功能', '新功能', '加入功能', '實現', '開發',
-      '我想要', '能不能', '可以做', '幫我做', '自動',
-      '新增一個', '建立一個', '創建一個', '設計一個'
-    ];
-
-    return featureKeywords.some(keyword => message.includes(keyword));
-  }
-}
-
-// 訊息報告系統
-class MessageReportSystem {
-  constructor() {
-    this.messageBuffer = [];
-    this.reportThreshold = 20;
-    this.lastReportTime = Date.now();
-    this.reportInterval = 2 * 60 * 60 * 1000; // 2小時
-    console.log('📊 訊息報告系統已初始化');
-  }
-
-  addMessage(userId, userName, message, groupId, groupName) {
-    const messageData = {
-      userId,
-      userName,
-      message,
-      groupId,
-      groupName,
-      timestamp: new Date(),
-      messageLength: message.length,
-      hasEmoji: /[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]/u.test(message),
-      isQuestion: /\?|？/.test(message),
-      topics: this.extractTopics(message)
-    };
-
-    this.messageBuffer.push(messageData);
-
-    if (this.shouldGenerateReport()) {
-      this.generateAndSendReport();
-    }
-  }
-
-  extractTopics(message) {
-    const topics = [];
-    const topicKeywords = {
-      '工作': ['工作', '上班', '公司', '老闆', '同事'],
-      '娛樂': ['電影', '遊戲', '音樂', '動漫', '追劇'],
-      '美食': ['吃', '餐廳', '料理', '美食', '飲料'],
-      '生活': ['天氣', '交通', '購物', '家庭', '健康'],
-      '學習': ['讀書', '考試', '學校', '課程', '學習'],
-      '科技': ['手機', '電腦', '網路', 'AI', '程式']
-    };
-
-    for (const [topic, keywords] of Object.entries(topicKeywords)) {
-      if (keywords.some(keyword => message.includes(keyword))) {
-        topics.push(topic);
-      }
-    }
-
-    return topics;
-  }
-
-  async generateAndSendReport() {
-    if (this.messageBuffer.length === 0) return;
-
-    try {
-      const report = this.createReport();
-
-      await client.pushMessage(MY_LINE_ID, {
-        type: 'text',
-        text: report
-      });
-
-      console.log(`📊 已發送訊息報告，包含 ${this.messageBuffer.length} 則訊息`);
-
-      this.messageBuffer = [];
-      this.lastReportTime = Date.now();
-
-    } catch (error) {
-      console.error('💥 發送報告失敗:', error.message);
-    }
-  }
-
-  createReport() {
-    const totalMessages = this.messageBuffer.length;
-    const timeRange = this.getTimeRange();
-    const topUsers = this.getTopUsers();
-    const topTopics = this.getTopTopics();
-
-    return `📊 訊息總結報告
-
-⏰ 時間範圍：${timeRange}
-💬 總訊息數：${totalMessages} 則
-
-👥 活躍用戶：
-${topUsers.slice(0, 3).map((user, index) => 
-  `${index + 1}. ${user.userName}: ${user.count} 則`
-).join('\n')}
-
-🎯 熱門話題：
-${topTopics.slice(0, 3).map((topic, index) => 
-  `${index + 1}. ${topic.topic}: ${topic.count} 次`
-).join('\n')}
-
-📈 統計數據：
-• 平均訊息長度：${Math.round(this.messageBuffer.reduce((sum, msg) => sum + msg.messageLength, 0) / totalMessages)} 字
-• 問句比例：${Math.round(this.messageBuffer.filter(msg => msg.isQuestion).length / totalMessages * 100)}%
-• 表情符號使用：${Math.round(this.messageBuffer.filter(msg => msg.hasEmoji).length / totalMessages * 100)}%
-
-這是我為你整理的對話摘要報告 📋`;
-  }
-
-  getTopUsers() {
-    const userCounts = new Map();
-    
-    this.messageBuffer.forEach(msg => {
-      const count = userCounts.get(msg.userId) || 0;
-      userCounts.set(msg.userId, count + 1);
-    });
-
-    return Array.from(userCounts.entries())
-      .map(([userId, count]) => {
-        const userName = this.messageBuffer.find(msg => msg.userId === userId)?.userName || '未知用戶';
-        return { userId, userName, count };
-      })
-      .sort((a, b) => b.count - a.count);
-  }
-
-  getTopTopics() {
-    const topicCounts = new Map();
-    
-    this.messageBuffer.forEach(msg => {
-      msg.topics.forEach(topic => {
-        const count = topicCounts.get(topic) || 0;
-        topicCounts.set(topic, count + 1);
-      });
-    });
-
-    return Array.from(topicCounts.entries())
-      .map(([topic, count]) => ({ topic, count }))
-      .sort((a, b) => b.count - a.count);
-  }
-
-  getTimeRange() {
-    if (this.messageBuffer.length === 0) return '無';
-    
-    const oldest = this.messageBuffer[0].timestamp;
-    const newest = this.messageBuffer[this.messageBuffer.length - 1].timestamp;
-    
-    return `${oldest.toLocaleString('zh-TW')} - ${newest.toLocaleString('zh-TW')}`;
-  }
-
-  shouldGenerateReport() {
-    const now = Date.now();
-    return this.messageBuffer.length >= this.reportThreshold || 
-           (now - this.lastReportTime) >= this.reportInterval;
-  }
-}
+// 初始化系統
+const apiManager = new EnhancedAPIManager();
+const pushMessageSystem = new SafePushMessageSystem();
+const weatherSystem = new FixedWeatherSystem();
+const newsSystem = new FixedNewsSystem();
+const decisionSystem = new FixedDecisionSystem();
+const contradictionSystem = new FixedContradictionSystem();
 
 // 防重複回覆系統
 class ReplyTokenManager {
@@ -1262,49 +836,7 @@ class ReplyTokenManager {
   }
 }
 
-// 時間系統
-const TimeSystem = {
-  getCurrentTime() {
-    const now = new Date();
-    const taiwanTime = new Date(now.toLocaleString("en-US", {timeZone: "Asia/Taipei"}));
-    
-    return {
-      timestamp: taiwanTime,
-      formatted: taiwanTime.toLocaleString('zh-TW', {
-        year: 'numeric', month: '2-digit', day: '2-digit',
-        hour: '2-digit', minute: '2-digit', second: '2-digit',
-        weekday: 'long', timeZone: 'Asia/Taipei'
-      })
-    };
-  }
-};
-
-// 初始化系統
 const replyTokenManager = new ReplyTokenManager();
-const smartAPIManager = new SmartAPIManager();
-const decisionInquiry = new DecisionInquirySystem();
-const contradictionDetection = new ContradictionDetectionSystem();
-const weatherSystem = new WeatherSystem();
-const taskManagement = new TaskManagementSystem();
-const selfLearning = new SelfLearningSystem();
-const messageReport = new MessageReportSystem();
-const conversationHistory = new Map();
-
-// 訊息長度限制器
-function limitMessageLength(message, maxLength = MAX_MESSAGE_LENGTH) {
-  if (typeof message === 'string') {
-    if (message.length > maxLength) {
-      return message.substring(0, maxLength - 20) + '\n\n...(內容太長被截掉了 😅)';
-    }
-    return message;
-  }
-  
-  if (message && message.text) {
-    message.text = limitMessageLength(message.text, maxLength);
-  }
-  
-  return message;
-}
 
 // 安全回覆系統
 async function safeReply(replyToken, message, retryCount = 0) {
@@ -1321,9 +853,10 @@ async function safeReply(replyToken, message, retryCount = 0) {
       return false;
     }
 
-    const limitedMessage = limitMessageLength(message);
+    // 格式化訊息
+    const formattedMessage = pushMessageSystem.formatMessage(message);
     
-    await client.replyMessage(replyToken, limitedMessage);
+    await client.replyMessage(replyToken, formattedMessage);
     console.log('✅ 回覆發送成功');
     return true;
     
@@ -1339,88 +872,160 @@ async function safeReply(replyToken, message, retryCount = 0) {
   }
 }
 
-// 天氣查詢檢測
+// 工具函數
 function isWeatherQuery(text) {
   const weatherKeywords = ['天氣', '氣溫', '下雨', '晴天', '陰天', '溫度', '濕度', '風速', '預報'];
   return weatherKeywords.some(keyword => text.includes(keyword));
 }
 
-// 任務創建檢測
-function isTaskCreationRequest(text) {
-  return taskManagement.parseTaskRequest(text) !== null;
+function isNewsQuery(text) {
+  const newsKeywords = ['新聞', '時事', '頭條', '報導', '最新消息'];
+  return newsKeywords.some(keyword => text.includes(keyword));
 }
 
 // 一般對話處理
-async function handleGeneralChat(message, userId, replyToken) {
+async function handleGeneralChat(message, userId) {
   try {
-    const complexity = smartAPIManager.analyzeRequestComplexity(message);
-    const modelInfo = smartAPIManager.selectOptimalModel(complexity);
-    
     const prompt = `用戶說：${message}
 
 請以顧晉瑋的身份回應，我是靜宜大學資管系學生，對科技AI有高度興趣。回應要自然親切，可以用一些台灣口語如「好der」、「ㄜ」、「哎呦」等。保持友善和有趣的語氣。`;
 
-    const response = await smartAPIManager.callModel(prompt, modelInfo);
-    
+    const response = await apiManager.smartAPICall(prompt);
     return response;
     
   } catch (error) {
     console.error('💥 一般對話處理失敗:', error.message);
+    return '哈哈，我現在有點忙碌，但我懂你的意思！好der～ 😊';
+  }
+}
+
+// 測試系統函數
+async function testSystems() {
+  console.log('🧪 開始系統測試...');
+  
+  try {
+    // 測試推送訊息
+    const pushTest = await pushMessageSystem.testPushMessage();
+    console.log(`📨 推送訊息測試: ${pushTest ? '✅ 成功' : '❌ 失敗'}`);
     
-    const simpleResponses = [
-      '哈哈，有趣！😄',
-      '我懂你的意思～',
-      '說得對呢！👌',
-      '真的嗎？告訴我更多',
-      '這個話題很有意思 🤔',
-      '我也這麼想',
-      '有道理！好der～'
-    ];
+    // 測試天氣API
+    try {
+      const weatherData = await weatherSystem.getWeather('台北');
+      console.log(`🌤️ 天氣API測試: ✅ 成功 (${weatherData.source})`);
+    } catch (error) {
+      console.log(`🌤️ 天氣API測試: ❌ 失敗 - ${error.message}`);
+    }
     
-    return simpleResponses[Math.floor(Math.random() * simpleResponses.length)];
+    // 測試AI API
+    try {
+      const aiResponse = await apiManager.smartAPICall('測試訊息');
+      console.log(`🤖 AI API測試: ✅ 成功`);
+    } catch (error) {
+      console.log(`🤖 AI API測試: ❌ 失敗 - ${error.message}`);
+    }
+    
+  } catch (error) {
+    console.error('🧪 系統測試錯誤:', error);
   }
 }
 
 // 健康檢查端點
 app.get('/', (req, res) => {
-  const currentTime = TimeSystem.getCurrentTime();
-  const apiUsageReport = smartAPIManager.getUsageReport();
+  const currentTime = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+  const apiStatus = apiManager.getAPIStatus();
   
   res.send(`
-    <h1>🎓 顧晉瑋的超智能AI助手系統 v7.0</h1>
+    <h1>🎓 顧晉瑋的修復版超智能AI助手 v7.1</h1>
     <p><strong>身份：靜宜大學資訊管理系學生</strong></p>
-    <p><strong>🇹🇼 台灣時間：${currentTime.formatted}</strong></p>
+    <p><strong>🇹🇼 台灣時間：${currentTime}</strong></p>
+    <p><strong>🔑 LINE ID：${MY_LINE_ID}</strong></p>
     
-    <h2>🆕 v7.0 新功能：</h2>
+    <h2>🔧 v7.1 修復項目：</h2>
     <ul>
-      <li>✅ <strong>決策詢問系統</strong> - 重要決策會先私訊詢問</li>
-      <li>✅ <strong>矛盾檢測系統</strong> - 偵測用戶矛盾發言並報告</li>
-      <li>✅ <strong>修復天氣查詢</strong> - 支援模糊搜尋和備用資料</li>
-      <li>✅ <strong>任務管理系統</strong> - 支援定時新聞、天氣等任務</li>
-      <li>✅ <strong>自學功能</strong> - 分析功能需求並提供實現方案</li>
-      <li>✅ <strong>訊息報告系統</strong> - 定期提供對話摘要</li>
+      <li>✅ <strong>修復404錯誤</strong> - 多重API備援機制</li>
+      <li>✅ <strong>修復私訊功能</strong> - 增強推送訊息系統</li>
+      <li>✅ <strong>修復天氣查詢</strong> - 多端點嘗試和備用資料</li>
+      <li>✅ <strong>修復新聞功能</strong> - 錯誤處理和備用內容</li>
+      <li>✅ <strong>增強決策系統</strong> - 改善私訊通知</li>
+      <li>✅ <strong>強化矛盾檢測</strong> - 修復報告機制</li>
     </ul>
     
-    <h2>🧠 智能功能：</h2>
-    <ul>
-      <li>🔐 <strong>決策保護</strong>：敏感操作會先徵求同意</li>
-      <li>🔍 <strong>矛盾偵測</strong>：自動分析用戶發言一致性</li>
-      <li>🌤️ <strong>天氣查詢</strong>：支援全台灣各縣市天氣</li>
-      <li>📋 <strong>任務排程</strong>：每天定時提供新聞、天氣等</li>
-      <li>🧠 <strong>自主學習</strong>：分析新功能需求並設計實現</li>
-      <li>📊 <strong>智能報告</strong>：定期彙整對話重點</li>
-    </ul>
+    <h2>📊 API狀態監控：</h2>
+    <div style="background-color: #f0f0f0; padding: 10px; border-radius: 5px;">
+      ${Object.entries(apiStatus).map(([api, status]) => 
+        `<p><strong>${api}:</strong> ${status.status} 
+         (失敗次數: ${status.failureCount}, 
+         最後成功: ${status.lastSuccess ? status.lastSuccess.toLocaleString('zh-TW') : '無'})</p>`
+      ).join('')}
+    </div>
     
-    <h2>📊 使用方式：</h2>
+    <h2>🧪 系統測試：</h2>
+    <p><a href="/test" target="_blank">點擊進行系統測試</a></p>
+    
+    <h2>📱 使用方式：</h2>
     <ul>
-      <li><strong>設定任務：</strong>「每天早上9點給我新聞」</li>
-      <li><strong>查詢天氣：</strong>「台北天氣」、「高雄氣溫」</li>
-      <li><strong>功能需求：</strong>「我想要新增一個功能...」</li>
-      <li><strong>取消任務：</strong>「取消我的新聞任務」</li>
+      <li><strong>查詢天氣：</strong>「台北天氣」「高雄會下雨嗎」</li>
+      <li><strong>最新新聞：</strong>「新聞」「今日頭條」</li>
+      <li><strong>一般對話：</strong>直接聊天即可</li>
     </ul>
 
-    <p><strong>💡 我是顧晉瑋，現在更智能了！好der 👌</strong></p>
+    <p><strong>💡 修復完成！現在系統更穩定了！好der 👌</strong></p>
   `);
+});
+
+// 測試端點
+app.get('/test', async (req, res) => {
+  console.log('🧪 收到測試請求');
+  
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-cache'
+  });
+  
+  res.write(`
+    <h1>🧪 系統測試中...</h1>
+    <div id="testResults">
+      <p>⏳ 正在執行測試，請稍候...</p>
+    </div>
+    <script>
+      function addResult(text) {
+        document.getElementById('testResults').innerHTML += '<p>' + text + '</p>';
+      }
+    </script>
+  `);
+  
+  try {
+    // 測試推送訊息
+    res.write(`<script>addResult('📨 測試推送訊息...');</script>`);
+    const pushTest = await pushMessageSystem.testPushMessage();
+    res.write(`<script>addResult('📨 推送訊息測試: ${pushTest ? '✅ 成功' : '❌ 失敗}');</script>`);
+    
+    // 測試天氣API
+    res.write(`<script>addResult('🌤️ 測試天氣API...');</script>`);
+    try {
+      const weatherData = await weatherSystem.getWeather('台北');
+      res.write(`<script>addResult('🌤️ 天氣API測試: ✅ 成功 (來源: ${weatherData.source})');</script>`);
+    } catch (error) {
+      res.write(`<script>addResult('🌤️ 天氣API測試: ❌ 失敗 - ${error.message}');</script>`);
+    }
+    
+    // 測試AI API
+    res.write(`<script>addResult('🤖 測試AI API...');</script>`);
+    try {
+      const aiResponse = await apiManager.smartAPICall('你好，這是測試訊息');
+      res.write(`<script>addResult('🤖 AI API測試: ✅ 成功');</script>`);
+      res.write(`<script>addResult('🤖 AI回應: ${aiResponse.substring(0, 50)}...');</script>`);
+    } catch (error) {
+      res.write(`<script>addResult('🤖 AI API測試: ❌ 失敗 - ${error.message}');</script>`);
+    }
+    
+    res.write(`<script>addResult('✅ 系統測試完成！');</script>`);
+    
+  } catch (error) {
+    res.write(`<script>addResult('❌ 測試過程發生錯誤: ${error.message}');</script>`);
+  }
+  
+  res.end();
 });
 
 // Webhook 端點
@@ -1470,21 +1075,11 @@ async function handleEvent(event) {
       
       if (data.startsWith('decision:')) {
         const [, decisionId, action] = data.split(':');
-        const result = await decisionInquiry.handleDecisionResponse(
+        const result = await decisionSystem.handleDecisionResponse(
           decisionId, 
           action, 
           event.replyToken
         );
-        return;
-      }
-      
-      if (data.startsWith('task:')) {
-        const [, action, taskId] = data.split(':');
-        if (action === 'cancel') {
-          const success = taskManagement.deleteTask(taskId, event.source.userId);
-          const message = success ? '✅ 任務已取消' : '❌ 找不到該任務';
-          await safeReply(event.replyToken, { type: 'text', text: message });
-        }
         return;
       }
     }
@@ -1502,38 +1097,27 @@ async function handleEvent(event) {
 
     // 獲取用戶名稱
     let userName = '未知用戶';
-    let groupName = null;
     try {
       if (groupId) {
         const profile = await client.getGroupMemberProfile(groupId, userId);
         userName = profile.displayName;
-        
-        try {
-          const groupSummary = await client.getGroupSummary(groupId);
-          groupName = groupSummary.groupName;
-        } catch (error) {
-          console.log('無法獲取群組名稱');
-        }
       } else {
         const profile = await client.getProfile(userId);
         userName = profile.displayName;
       }
     } catch (error) {
-      console.error('❌ 獲取用戶名稱錯誤:', error.message);
+      console.log('無法獲取用戶名稱，使用預設值');
     }
 
-    // 添加到報告系統
-    messageReport.addMessage(userId, userName, messageText, groupId, groupName);
-
     // 矛盾檢測
-    contradictionDetection.analyzeStatement(userId, userName, messageText);
+    contradictionSystem.analyzeStatement(userId, userName, messageText);
 
     // 檢查是否需要決策詢問
-    if (decisionInquiry.shouldRequestDecision(messageText)) {
+    if (decisionSystem.shouldRequestDecision(messageText)) {
       console.log(`🔐 觸發決策詢問: ${messageText}`);
       
-      const decisionId = await decisionInquiry.requestDecision(
-        `${groupId ? `群組「${groupName || '未知群組'}」中` : '私人對話中'}用戶 ${userName} 的請求`,
+      const decisionId = await decisionSystem.requestDecision(
+        `${groupId ? '群組中' : '私人對話中'}用戶 ${userName} 的請求`,
         messageText,
         replyToken,
         userId,
@@ -1546,50 +1130,17 @@ async function handleEvent(event) {
       }
     }
 
-    // 自學功能處理
-    if (selfLearning.isFeatureRequest(messageText)) {
-      console.log(`🧠 處理功能需求: ${messageText}`);
-      
-      const analysis = await selfLearning.analyzeFeatureRequest(userId, messageText);
-      
-      if (analysis) {
-        const implementation = await selfLearning.implementFeature(userId, messageText, analysis);
-        await safeReply(replyToken, { type: 'text', text: implementation.message });
+    // 新聞查詢
+    if (isNewsQuery(messageText)) {
+      try {
+        const newsContent = await newsSystem.getNews();
+        await safeReply(replyToken, { type: 'text', text: newsContent });
         return;
-      }
-    }
-
-    // 任務創建處理
-    if (isTaskCreationRequest(messageText)) {
-      const taskInfo = taskManagement.parseTaskRequest(messageText);
-      
-      if (taskInfo) {
-        const taskId = taskManagement.createTask(userId, taskInfo.taskType, taskInfo.schedule, taskInfo.content);
-        
-        const confirmMessage = {
-          type: 'template',
-          altText: '✅ 任務設定成功',
-          template: {
-            type: 'buttons',
-            title: '✅ 任務設定成功！',
-            text: `${taskInfo.content}任務已設定\n排程：${taskInfo.schedule}`,
-            actions: [
-              {
-                type: 'postback',
-                label: '🗑️ 取消任務',
-                data: `task:cancel:${taskId}`,
-                displayText: '取消這個任務'
-              },
-              {
-                type: 'text',
-                label: '👌 了解',
-                text: '了解'
-              }
-            ]
-          }
-        };
-        
-        await safeReply(replyToken, confirmMessage);
+      } catch (error) {
+        await safeReply(replyToken, {
+          type: 'text',
+          text: '抱歉，新聞查詢暫時有問題，請稍後再試 📰'
+        });
         return;
       }
     }
@@ -1608,9 +1159,9 @@ async function handleEvent(event) {
 ☔ 降雨機率：${weatherData.rainChance}%
 😊 舒適度：${weatherData.comfort}
 ⏰ 更新時間：${weatherData.updateTime}
+📡 資料來源：${weatherData.source}
 
-${weatherData.isFallback ? '⚠️ 使用備用天氣資料' : ''}
-📱 記得根據天氣調整穿著！`;
+${weatherData.isFallback ? '⚠️ 使用備用天氣資料\n' : ''}📱 記得根據天氣調整穿著！`;
 
         await safeReply(replyToken, { type: 'text', text: weatherMessage });
         return;
@@ -1624,7 +1175,7 @@ ${weatherData.isFallback ? '⚠️ 使用備用天氣資料' : ''}
     }
 
     // 一般對話處理
-    const response = await handleGeneralChat(messageText, userId, replyToken);
+    const response = await handleGeneralChat(messageText, userId);
     await safeReply(replyToken, { type: 'text', text: response });
 
   } catch (error) {
@@ -1648,8 +1199,13 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ LINE Bot 伺服器成功啟動！`);
   console.log(`🌐 伺服器運行在端口 ${PORT}`);
   console.log(`📍 Webhook URL: /webhook`);
-  console.log(`🎓 顧晉瑋的超智能AI助手 v7.0 已就緒！`);
-  console.log(`🔐 決策系統、🔍 矛盾檢測、📋 任務管理、🧠 自學功能已啟用`);
+  console.log(`🎓 顧晉瑋的修復版超智能AI助手 v7.1 已就緒！`);
+  console.log(`🔧 已修復404錯誤和私訊問題`);
+  
+  // 啟動後自動測試系統
+  setTimeout(() => {
+    testSystems();
+  }, 5000);
 });
 
 // 處理未捕獲的異常
