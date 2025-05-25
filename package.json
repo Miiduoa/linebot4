@@ -1,12 +1,13 @@
 {
-  "name": "super-enhanced-line-chatbot",
-  "version": "3.0.0",
-  "description": "超級增強版 LINE 聊天機器人 - 具備記憶、矛盾檢測、沉默提醒、收回追蹤與決策輔助功能",
+  "name": "smart-line-chatbot-v7",
+  "version": "7.0.0",
+  "description": "顧晉瑋的超智能 LINE Bot - 具備決策詢問、矛盾檢測、任務管理、自學功能",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "build": "echo 'No build step required'"
+    "build": "echo 'No build step required'",
+    "test": "echo 'Tests not implemented yet'"
   },
   "dependencies": {
     "@line/bot-sdk": "^8.0.0",
@@ -24,16 +25,25 @@
     "line",
     "chatbot",
     "ai",
-    "super-intelligent",
-    "memory-system",
+    "decision-system",
     "contradiction-detection",
-    "silent-member-reminder",
-    "unsend-message-tracker",
-    "decision-assistant",
+    "task-management",
+    "self-learning",
+    "weather",
+    "news",
+    "smart-assistant",
     "nodejs",
     "express",
     "gemini"
   ],
-  "author": "Super Chatbot Developer",
-  "license": "MIT"
+  "author": "顧晉瑋 (靜宜大學資管系)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/smart-line-chatbot"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/smart-line-chatbot/issues"
+  },
+  "homepage": "https://github.com/your-username/smart-line-chatbot#readme"
 }
