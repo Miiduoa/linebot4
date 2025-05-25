@@ -1,0 +1,54 @@
+{
+  "name": "fixed-smart-line-chatbot-v9.1",
+  "version": "9.1.0",
+  "description": "顧晉瑋的修復版超智能 LINE Bot - 已修復 Gemini API 和時間解析問題",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "build": "echo 'No build step required'",
+    "test": "echo 'Tests not implemented yet'"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^9.3.0",
+    "@google/generative-ai": "^0.21.0",
+    "express": "^4.19.2",
+    "axios": "^1.7.2",
+    "crypto": "^1.0.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "line",
+    "chatbot",
+    "ai",
+    "fixed",
+    "gemini-1.5-flash",
+    "reminder-system",
+    "weather",
+    "news",
+    "smart-assistant",
+    "nodejs",
+    "express",
+    "gemini",
+    "time-parsing",
+    "auto-fix"
+  ],
+  "author": "顧晉瑋 (靜宜大學資管系)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/fixed-smart-line-chatbot"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/fixed-smart-line-chatbot/issues"
+  },
+  "homepage": "https://github.com/your-username/fixed-smart-line-chatbot#readme",
+  "config": {
+    "timezone": "Asia/Taipei"
+  }
+}
