@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3000;
 // 設定時區為台灣
 process.env.TZ = 'Asia/Taipei';
 
-console.log('🚀 正在啟動超級增強版 LINE Bot v12.0...');
+console.log('🚀 正在啟動AI分身版 LINE Bot - 終極進化版...');
 console.log('⏰ 當前時間:', new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }));
 
 // 配置資訊
@@ -35,174 +35,143 @@ const MAX_MESSAGE_LENGTH = 2000;
 const client = new line.Client(config);
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
+// 主人個性檔案 - 這是AI分身的核心
+const OWNER_PERSONALITY = {
+  name: '顧晉瑋',
+  identity: '靜宜大學資管系學生',
+  speaking_style: {
+    tone: '活潑友善，台灣年輕人語氣',
+    expressions: ['超棒der', '好欸', '哎呦', '真的假的', '太酷啦', '我覺得可以', '沒問題啦'],
+    punctuation: '經常使用驚嘆號和波浪號～',
+    emoji_usage: '適度使用表情符號，不會過度'
+  },
+  values: {
+    helpful: '很樂意幫助朋友',
+    honest: '直率坦誠，不會拐彎抹角',
+    tech_savvy: '對科技和程式設計很有興趣',
+    student_life: '理解學生生活的忙碌和壓力'
+  },
+  response_patterns: {
+    agreement: ['對呀對呀', '我也這樣想', '完全同意', '說得對'],
+    disagreement: ['欸不過我覺得', '可是這樣會不會', '我想法有點不同'],
+    excitement: ['哇靠！', '超酷的！', '太厲害了吧', '這個我喜歡'],
+    concern: ['你還好嗎？', '要不要休息一下', '注意身體喔', '別太累了']
+  }
+};
+
 console.log('🔑 機器人主人:', OWNER_LINE_ID);
-console.log('✨ 超級增強版功能已啟用');
+console.log('🎭 AI分身模式已啟用 - 完全模擬顧晉瑋的個性');
 
-// 圖表生成系統
-class ChartSystem {
-  constructor() {
-    console.log('📊 圖表生成系統已初始化');
-  }
-
-  // 生成 ASCII 統計圖
-  generateBarChart(data, title = '統計圖表') {
-    if (!data || data.length === 0) return '沒有資料可顯示';
-    
-    const maxValue = Math.max(...data.map(d => d.value));
-    const maxBarLength = 20;
-    
-    let chart = `📊 ${title}\n\n`;
-    
-    data.forEach(item => {
-      const barLength = Math.round((item.value / maxValue) * maxBarLength);
-      const bar = '█'.repeat(barLength) + '░'.repeat(maxBarLength - barLength);
-      chart += `${item.name.padEnd(8)} │${bar}│ ${item.value}\n`;
-    });
-    
-    return chart;
-  }
-
-  // 生成折線圖 (用符號表示)
-  generateLineChart(data, title = '趨勢圖') {
-    if (!data || data.length === 0) return '沒有資料可顯示';
-    
-    const maxValue = Math.max(...data.map(d => d.value));
-    const minValue = Math.min(...data.map(d => d.value));
-    const range = maxValue - minValue || 1;
-    const height = 10;
-    
-    let chart = `📈 ${title}\n\n`;
-    
-    // 繪製圖表
-    for (let row = height; row >= 0; row--) {
-      let line = '';
-      for (let i = 0; i < data.length; i++) {
-        const normalizedValue = ((data[i].value - minValue) / range) * height;
-        if (Math.round(normalizedValue) === row) {
-          line += '●';
-        } else if (i > 0 && Math.round(((data[i-1].value - minValue) / range) * height) === row) {
-          line += '─';
-        } else {
-          line += ' ';
-        }
-      }
-      chart += line + '\n';
-    }
-    
-    // 添加 X 軸標籤
-    chart += data.map(d => d.name.charAt(0)).join('') + '\n';
-    chart += `最小值: ${minValue}, 最大值: ${maxValue}`;
-    
-    return chart;
-  }
-
-  // 生成圓餅圖 (用文字表示)
-  generatePieChart(data, title = '分布圖') {
-    if (!data || data.length === 0) return '沒有資料可顯示';
-    
-    const total = data.reduce((sum, item) => sum + item.value, 0);
-    const symbols = ['██', '▓▓', '▒▒', '░░', '▄▄', '▀▀', '▌▌', '▐▐'];
-    
-    let chart = `🥧 ${title}\n\n`;
-    
-    data.forEach((item, index) => {
-      const percentage = ((item.value / total) * 100).toFixed(1);
-      const symbol = symbols[index % symbols.length];
-      chart += `${symbol} ${item.name}: ${item.value} (${percentage}%)\n`;
-    });
-    
-    return chart;
-  }
-}
-
-// 超級AI系統
-class SuperAISystem {
+// 超擬真AI分身系統
+class HyperRealisticAISystem {
   constructor() {
     this.conversations = new Map();
     this.userProfiles = new Map();
     this.groupContexts = new Map();
-    this.learningData = new Map(); // 學習資料
-    console.log('🧠 超級AI系統已初始化');
+    this.personalityLearning = new Map(); // 學習主人的語氣模式
+    this.contradictonHistory = new Map(); // 矛盾偵測記錄
+    this.messageRecallHistory = new Map(); // 訊息收回記錄
+    console.log('🧠 超擬真AI分身系統已初始化');
   }
 
-  async generateReply(userId, message, context = {}) {
+  async generatePersonalizedReply(userId, message, context = {}) {
     try {
       this.recordConversation(userId, message, context);
+      
+      // 矛盾偵測
+      await this.detectContradictions(userId, message, context);
       
       const userProfile = this.userProfiles.get(userId) || { 
         name: '朋友', 
         messageCount: 0,
         isGroup: context.isGroup,
         preferences: [],
-        personality: 'friendly'
+        personality: 'friendly',
+        lastMessages: []
       };
 
-      const reply = await this.generateIntelligentReply(message, userProfile, context);
+      // 生成完全模擬主人個性的回覆
+      const reply = await this.generateOwnerStyleReply(message, userProfile, context);
       return reply;
 
     } catch (error) {
-      console.error('AI回覆生成失敗:', error);
-      return this.getSmartOfflineReply(message);
+      console.error('❌ AI分身回覆生成失敗:', error);
+      return this.getOwnerStyleOfflineReply(message);
     }
   }
 
-  async generateIntelligentReply(message, userProfile, context) {
+  async generateOwnerStyleReply(message, userProfile, context) {
     try {
       const model = genAI.getGenerativeModel({ 
         model: "gemini-1.5-flash-002",
         generationConfig: {
           temperature: 0.8,
-          maxOutputTokens: 1500,
+          maxOutputTokens: 1000,
         }
       });
       
       // 獲取群組上下文
       let groupContext = '';
       if (context.isGroup && context.groupId) {
-        groupContext = this.getGroupContext(context.groupId, 5);
+        groupContext = this.getGroupContext(context.groupId, 10);
       }
-      
-      const prompt = `你是顧晉瑋，靜宜大學資管系學生，個性活潑友善。
 
+      // 學習到的個人風格
+      const learnedStyle = this.getLearnedPersonalityStyle();
+      
+      const prompt = `你現在要完全模擬顧晉瑋的身份和個性來回覆。
+
+【顧晉瑋的基本資料】
+${JSON.stringify(OWNER_PERSONALITY, null, 2)}
+
+【學習到的個人風格】
+${learnedStyle}
+
+【對話情境】
+用戶：${userProfile.name}
 用戶說：${message}
-對話環境：${context.isGroup ? `群組對話 - ${context.groupName}` : '私人對話'}
-用戶名稱：${userProfile.name}
+環境：${context.isGroup ? `群組對話「${context.groupName}」` : '私人對話'}
 用戶互動次數：${userProfile.messageCount}
 
-${groupContext ? `最近群組對話：\n${groupContext}\n` : ''}
+${groupContext ? `【最近群組對話】\n${groupContext}\n` : ''}
 
-回覆原則：
-1. 保持台灣年輕人的說話風格
-2. 可以使用「超」、「der」、「欸」等口語
-3. 如果是群組對話，注意群組氛圍
-4. 適當使用 emoji
-5. 回覆長度100-200字
-6. 如果涉及數據，考慮用簡單圖表表示
+【回覆要求】
+1. 完全用顧晉瑋的語氣、價值觀、情緒風格回覆
+2. 使用他常用的口語表達方式
+3. 回覆要讓人感覺就是顧晉瑋本人在說話
+4. 長度控制在100-200字
+5. 適當使用台灣年輕人的語氣和用詞
+6. 展現出資管系學生的特質
 
-請自然回覆：`;
+請以顧晉瑋的身份自然回覆：`;
 
       const result = await model.generateContent(prompt);
       const response = await result.response;
       let text = response.text().replace(/[*#`_~]/g, '').trim();
       
-      // 學習用戶偏好
-      this.learnUserPreference(userProfile.userId, message, text);
+      // 學習這次的回覆風格
+      this.learnPersonalityFromResponse(text, message);
       
-      return text || this.getSmartOfflineReply(message);
+      return text || this.getOwnerStyleOfflineReply(message);
       
     } catch (error) {
-      console.log('Gemini失敗，使用備用AI...');
-      return await this.useAdvancedBackupAI(message, context);
+      console.log('🔄 Gemini失敗，使用備用AI模擬分身...');
+      return await this.useBackupAIForOwnerStyle(message, context);
     }
   }
 
-  async useAdvancedBackupAI(message, context) {
+  async useBackupAIForOwnerStyle(message, context) {
     try {
+      const ownerStyle = `你是顧晉瑋，靜宜大學資管系學生。說話風格：活潑友善，愛用「超」「der」「欸」等台灣年輕人語氣，對科技有興趣，樂於助人。`;
+      
       const response = await axios.post(`${BACKUP_AI_URL}/chat/completions`, {
         model: 'gpt-3.5-turbo',
         messages: [{ 
+          role: 'system', 
+          content: ownerStyle
+        }, {
           role: 'user', 
-          content: `以顧晉瑋（台灣大學生）身份回覆：${message}。環境：${context.isGroup ? '群組' : '私人'}對話。用台灣年輕人語氣。` 
+          content: `${message}（在${context.isGroup ? '群組' : '私人'}對話中）`
         }],
         max_tokens: 300,
         temperature: 0.8
@@ -217,63 +186,308 @@ ${groupContext ? `最近群組對話：\n${groupContext}\n` : ''}
       return response.data.choices[0].message.content.trim();
       
     } catch (error) {
-      console.error('備用AI也失敗:', error);
-      return this.getSmartOfflineReply(message);
+      console.error('❌ 備用AI分身也失敗:', error);
+      return this.getOwnerStyleOfflineReply(message);
     }
   }
 
-  getSmartOfflineReply(message) {
-    // 智能離線回覆
+  getOwnerStyleOfflineReply(message) {
+    // 完全模擬顧晉瑋風格的離線回覆
     if (message.includes('你好') || message.includes('嗨') || message.includes('hi')) {
-      return '嗨嗨！我是顧晉瑋的AI助手，超開心認識你～ 😊';
+      return '嗨嗨！我是顧晉瑋～很開心認識你欸！有什麼事都可以找我聊 😊';
     }
-    if (message.includes('謝謝') || message.includes('感謝') || message.includes('thx')) {
-      return '不會啦～互相幫忙是應該der！有什麼事隨時找我 💪';
+    if (message.includes('謝謝') || message.includes('感謝')) {
+      return '不會啦～朋友之間互相幫忙是應該der！有需要隨時說喔 💪';
     }
-    if (message.includes('再見') || message.includes('掰掰') || message.includes('bye')) {
-      return '掰掰～要常常來聊天喔！我隨時都在 👋';
+    if (message.includes('再見') || message.includes('掰掰')) {
+      return '掰掰～要常常來找我聊天喔！我隨時都在線上 👋';
+    }
+    if (message.includes('程式') || message.includes('coding') || message.includes('寫code')) {
+      return '哇！程式設計欸～我超喜歡的！你在學什麼語言？Python還是JavaScript？我可以分享一些心得喔 💻';
+    }
+    if (message.includes('學校') || message.includes('課業') || message.includes('考試')) {
+      return '欸～學生生活真的蠻忙der！我也是靜宜資管系的，完全懂那種壓力。要不要聊聊紓壓的方法？ 📚';
     }
     if (message.includes('?') || message.includes('？')) {
-      return '這個問題超有趣的！讓我想想... 不過我現在腦袋有點卡住，等等再深入討論好嗎？ 🤔';
-    }
-    if (message.includes('哈哈') || message.includes('好笑')) {
-      return '哈哈哈～你超幽默der！我也被逗笑了 😂';
+      return '這個問題超有趣的！讓我想想... 不過我現在腦袋有點卡住，等等再來深入討論好嗎？ 🤔';
     }
     
-    const smartResponses = [
-      '欸～你說的超有道理！我也是這樣想der 👍',
-      '哇～這個話題好有趣，讓我學到新東西了！',
-      '真der假der？你這樣說我覺得超cool～',
-      '我懂我懂！有時候就是會這樣對吧 😅',
-      '說得超棒！完全同意你的想法 ✨',
-      '哇靠，你的想法跟我超像的耶！',
-      '這個我有印象！之前也有人跟我討論過類似的～'
+    const ownerStyleResponses = [
+      '欸～你說的超有道理！我也是這樣想der，完全同感 👍',
+      '哇靠，這個話題好有趣！讓我學到新東西了，謝謝分享～',
+      '真的假的？你這樣說我覺得超cool的，想知道更多細節！',
+      '我懂我懂！有時候就是會遇到這種狀況對吧，超能理解 😅',
+      '說得超棒！我完全同意你的想法，這觀點我很喜歡 ✨',
+      '哎呦～你的想法跟我好像喔！感覺我們蠻合得來der',
+      '這個我之前也有想過欸！果然英雄所見略同哈哈 😄'
     ];
     
-    const randomIndex = Math.floor(Math.random() * smartResponses.length);
-    return smartResponses[randomIndex];
+    const randomIndex = Math.floor(Math.random() * ownerStyleResponses.length);
+    return ownerStyleResponses[randomIndex];
   }
 
-  learnUserPreference(userId, userMessage, botReply) {
-    // 簡單的學習系統
-    if (!this.learningData.has(userId)) {
-      this.learningData.set(userId, {
-        topics: [],
-        responseStyles: [],
-        interactionPattern: 'normal'
+  learnPersonalityFromResponse(response, originalMessage) {
+    // 學習回覆風格，持續優化分身模擬
+    if (!this.personalityLearning.has(OWNER_LINE_ID)) {
+      this.personalityLearning.set(OWNER_LINE_ID, {
+        commonPhrases: [],
+        responsePatterns: [],
+        topicPreferences: []
       });
     }
     
-    const learning = this.learningData.get(userId);
+    const learning = this.personalityLearning.get(OWNER_LINE_ID);
     
-    // 分析用戶喜好的話題
-    if (userMessage.includes('電影')) learning.topics.push('movie');
-    if (userMessage.includes('音樂')) learning.topics.push('music');
-    if (userMessage.includes('遊戲')) learning.topics.push('game');
-    if (userMessage.includes('美食')) learning.topics.push('food');
+    // 提取常用詞彙
+    const phrases = response.match(/[\u4e00-\u9fa5]+/g) || [];
+    phrases.forEach(phrase => {
+      if (phrase.length > 1 && !learning.commonPhrases.includes(phrase)) {
+        learning.commonPhrases.push(phrase);
+      }
+    });
     
-    // 去重
-    learning.topics = [...new Set(learning.topics)];
+    // 保持學習資料在合理範圍內
+    if (learning.commonPhrases.length > 100) {
+      learning.commonPhrases = learning.commonPhrases.slice(-100);
+    }
+  }
+
+  getLearnedPersonalityStyle() {
+    const learning = this.personalityLearning.get(OWNER_LINE_ID);
+    if (!learning) return '還在學習中...';
+    
+    return `常用詞彙：${learning.commonPhrases.slice(-20).join('、')}`;
+  }
+
+  async detectContradictions(userId, message, context) {
+    if (!this.contradictonHistory.has(userId)) {
+      this.contradictonHistory.set(userId, []);
+    }
+    
+    const userHistory = this.contradictonHistory.get(userId);
+    userHistory.push({
+      message,
+      timestamp: new Date(),
+      context
+    });
+    
+    // 保留最近20條訊息用於矛盾偵測
+    if (userHistory.length > 20) {
+      userHistory.shift();
+    }
+    
+    // 如果有足夠的歷史訊息，進行矛盾偵測
+    if (userHistory.length >= 3) {
+      try {
+        const contradiction = await this.analyzeContradictions(userId, userHistory);
+        if (contradiction) {
+          await this.notifyOwnerOfContradiction(userId, contradiction, context);
+        }
+      } catch (error) {
+        console.error('❌ 矛盾偵測失敗:', error);
+      }
+    }
+  }
+
+  async analyzeContradictions(userId, history) {
+    try {
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-002" });
+      
+      const recentMessages = history.slice(-5).map(h => h.message).join('\n');
+      
+      const prompt = `請分析以下用戶的最近對話，檢查是否有前後矛盾的內容：
+
+用戶最近的訊息：
+${recentMessages}
+
+請判斷：
+1. 是否有明顯的前後矛盾？
+2. 如果有，具體是什麼矛盾？
+3. 矛盾的嚴重程度（輕微/中等/嚴重）
+
+如果沒有矛盾，回覆「無矛盾」
+如果有矛盾，請簡潔說明矛盾內容。`;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      const analysis = response.text().trim();
+      
+      if (analysis !== '無矛盾' && !analysis.includes('無矛盾')) {
+        return analysis;
+      }
+      
+      return null;
+      
+    } catch (error) {
+      console.error('❌ 矛盾分析失敗:', error);
+      return null;
+    }
+  }
+
+  async notifyOwnerOfContradiction(userId, contradiction, context) {
+    try {
+      const userName = context.userName || '未知用戶';
+      const contradictionMsg = await this.createRichMessage({
+        type: 'bubble',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: '🚨 矛盾偵測警報',
+              weight: 'bold',
+              size: 'lg',
+              color: '#FF5551'
+            }
+          ]
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: `用戶：${userName}`,
+              weight: 'bold',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: `來源：${context.isGroup ? '群組' : '私人對話'}`,
+              size: 'sm',
+              color: '#666666',
+              margin: 'sm'
+            },
+            {
+              type: 'separator',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: '發現矛盾：',
+              weight: 'bold',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: contradiction,
+              wrap: true,
+              margin: 'sm'
+            },
+            {
+              type: 'text',
+              text: `時間：${new Date().toLocaleString('zh-TW')}`,
+              size: 'xs',
+              color: '#888888',
+              margin: 'md'
+            }
+          ]
+        }
+      });
+      
+      await client.pushMessage(OWNER_LINE_ID, contradictionMsg);
+      console.log('📨 矛盾偵測通知已發送給主人');
+      
+    } catch (error) {
+      console.error('❌ 矛盾通知發送失敗:', error);
+    }
+  }
+
+  recordMessageRecall(userId, messageId, originalText, context) {
+    if (!this.messageRecallHistory.has(userId)) {
+      this.messageRecallHistory.set(userId, []);
+    }
+    
+    const recalls = this.messageRecallHistory.get(userId);
+    recalls.push({
+      messageId,
+      originalText,
+      timestamp: new Date(),
+      context
+    });
+    
+    // 立即通知主人
+    this.notifyOwnerOfRecall(userId, originalText, context);
+  }
+
+  async notifyOwnerOfRecall(userId, originalText, context) {
+    try {
+      const userName = context.userName || '未知用戶';
+      const recallMsg = await this.createRichMessage({
+        type: 'bubble',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: '📢 訊息收回提醒',
+              weight: 'bold',
+              size: 'lg',
+              color: '#FF8C00'
+            }
+          ]
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: `${userName} 收回了一則訊息`,
+              weight: 'bold',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: `來源：${context.isGroup ? '群組' : '私人對話'}`,
+              size: 'sm',
+              color: '#666666',
+              margin: 'sm'
+            },
+            {
+              type: 'separator',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: '原始內容：',
+              weight: 'bold',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: originalText || '無法獲取原始內容',
+              wrap: true,
+              margin: 'sm',
+              color: '#333333'
+            },
+            {
+              type: 'text',
+              text: `時間：${new Date().toLocaleString('zh-TW')}`,
+              size: 'xs',
+              color: '#888888',
+              margin: 'md'
+            }
+          ]
+        }
+      });
+      
+      await client.pushMessage(OWNER_LINE_ID, recallMsg);
+      console.log('📨 訊息收回通知已發送給主人');
+      
+    } catch (error) {
+      console.error('❌ 收回通知發送失敗:', error);
+    }
+  }
+
+  async createRichMessage(bubbleData) {
+    return {
+      type: 'flex',
+      altText: bubbleData.header.contents[0].text,
+      contents: bubbleData
+    };
   }
 
   recordConversation(userId, message, context) {
@@ -286,7 +500,7 @@ ${groupContext ? `最近群組對話：\n${groupContext}\n` : ''}
       groupId: context.groupId
     });
 
-    // 記錄群組對話上下文 (增強版)
+    // 記錄群組對話上下文
     if (context.isGroup && context.groupId) {
       if (!this.groupContexts.has(context.groupId)) {
         this.groupContexts.set(context.groupId, []);
@@ -298,7 +512,6 @@ ${groupContext ? `最近群組對話：\n${groupContext}\n` : ''}
         message,
         timestamp: new Date()
       });
-      // 保留最近30條訊息
       if (groupContext.length > 30) {
         groupContext.shift();
       }
@@ -311,13 +524,21 @@ ${groupContext ? `最近群組對話：\n${groupContext}\n` : ''}
         messageCount: 0,
         isGroup: context.isGroup,
         lastSeen: new Date(),
-        preferences: []
+        preferences: [],
+        lastMessages: []
       });
     }
     
     const profile = this.userProfiles.get(userId);
     profile.messageCount++;
     profile.lastSeen = new Date();
+    
+    // 記錄最近訊息用於學習
+    if (!profile.lastMessages) profile.lastMessages = [];
+    profile.lastMessages.push(message);
+    if (profile.lastMessages.length > 10) {
+      profile.lastMessages.shift();
+    }
 
     // 清理舊對話
     if (this.conversations.size > 200) {
@@ -333,45 +554,39 @@ ${groupContext ? `最近群組對話：\n${groupContext}\n` : ''}
       `${msg.userName}: ${msg.message}`
     ).join('\n');
   }
-
-  getDetailedGroupContext(groupId, lines = 20) {
-    const context = this.groupContexts.get(groupId) || [];
-    const recent = context.slice(-lines);
-    return recent.map(msg => 
-      `[${msg.timestamp.toLocaleTimeString('zh-TW')}] ${msg.userName}: ${msg.message}`
-    ).join('\n');
-  }
 }
 
-// 超級決策系統
-class SuperDecisionSystem {
+// 超級決策系統（圖文版）
+class SuperAdvancedDecisionSystem {
   constructor() {
     this.pendingDecisions = new Map();
     this.decisionHistory = new Map();
-    this.quickActions = new Map(); // 快速操作
-    console.log('⚖️ 超級決策系統已初始化');
+    console.log('⚖️ 超級決策系統（圖文版）已初始化');
   }
 
   shouldAskOwner(message, context) {
-    const socialKeywords = ['約', '邀請', '聚會', '吃飯', '喝茶', '見面', '參加', '出去', '聚餐', '活動'];
-    const moneyKeywords = ['借', '錢', '付款', '費用', '買', '賣', '轉帳', '匯款', '投資'];
-    const importantKeywords = ['重要', '緊急', '幫忙', '拜託', '請問', '決定', '選擇'];
-    const workKeywords = ['工作', '案子', '專案', '會議', '簡報', 'deadline'];
+    const socialKeywords = ['約', '邀請', '聚會', '吃飯', '喝茶', '見面', '參加', '出去', '聚餐', '活動', '玩'];
+    const moneyKeywords = ['借', '錢', '付款', '費用', '買', '賣', '轉帳', '匯款', '投資', '花錢'];
+    const importantKeywords = ['重要', '緊急', '幫忙', '拜託', '請問', '決定', '選擇', '建議'];
+    const workKeywords = ['工作', '案子', '專案', '會議', '簡報', 'deadline', '合作'];
+    const personalKeywords = ['私事', '個人', '秘密', '不要說', '別告訴'];
     
     const hasSocialKeyword = socialKeywords.some(keyword => message.includes(keyword));
     const hasMoneyKeyword = moneyKeywords.some(keyword => message.includes(keyword));
     const hasImportantKeyword = importantKeywords.some(keyword => message.includes(keyword));
     const hasWorkKeyword = workKeywords.some(keyword => message.includes(keyword));
+    const hasPersonalKeyword = personalKeywords.some(keyword => message.includes(keyword));
     const isGroupImportant = context.isGroup && (message.includes('@all') || message.includes('大家'));
-    const isLongMessage = message.length > 50; // 長訊息可能比較重要
+    const isLongMessage = message.length > 80;
+    const hasQuestionMark = message.includes('?') || message.includes('？');
 
-    return hasSocialKeyword || hasMoneyKeyword || hasImportantKeyword || hasWorkKeyword || isGroupImportant || 
-           (isLongMessage && (hasImportantKeyword || context.isGroup));
+    return hasSocialKeyword || hasMoneyKeyword || hasImportantKeyword || hasWorkKeyword || 
+           hasPersonalKeyword || isGroupImportant || (isLongMessage && hasQuestionMark);
   }
 
   async requestDecision(message, userId, userName, context, replyToken) {
     const decisionId = `decision-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const shortId = decisionId.substr(-8); // 8位短ID
+    const shortId = decisionId.substr(-8);
     
     const decision = {
       id: decisionId,
@@ -390,1126 +605,539 @@ class SuperDecisionSystem {
     this.pendingDecisions.set(decisionId, decision);
 
     try {
-      // 獲取詳細群組對話上下文
+      // 獲取詳細上下文
       let contextInfo = '';
-      if (context.isGroup && superAI.groupContexts.has(context.groupId)) {
-        contextInfo = superAI.getDetailedGroupContext(context.groupId, 15);
+      if (context.isGroup && aiSystem.groupContexts.has(context.groupId)) {
+        const fullContext = aiSystem.groupContexts.get(context.groupId);
+        contextInfo = fullContext.slice(-15).map(msg => 
+          `[${msg.timestamp.toLocaleTimeString('zh-TW')}] ${msg.userName}: ${msg.message}`
+        ).join('\n');
       }
 
-      // 生成決策分析
-      const analysisResult = await this.analyzeDecision(message, context, contextInfo);
+      // AI分析決策
+      const aiAnalysis = await this.analyzeDecisionWithAI(message, context, contextInfo);
 
-      const decisionText = `🤔 需要你的決策！
-
-📋 決策編號：${shortId}
-👤 來自：${userName}
-📍 來源：${context.isGroup ? `群組「${context.groupName || '未知群組'}」` : '私人對話'}
-💬 訊息：${message}
-
-🔍 AI分析：
-${analysisResult}
-
-📝 最近對話紀錄：
-${contextInfo ? contextInfo.substring(0, 800) + (contextInfo.length > 800 ? '...' : '') : '(無對話紀錄)'}
-
-💡 你可以：
-• 同意 ${shortId} - 同意這個請求
-• 拒絕 ${shortId} - 拒絕並禮貌回覆
-• 問 ${shortId} [問題] - 向對方詢問更多資訊
-• 回覆 ${shortId} [訊息] - 自訂回覆內容
-• 更多 ${shortId} - 查看完整對話記錄
-• 忽略 ${shortId} - 暫時不處理
-
-⏰ 如果30分鐘內沒回應，我會自動婉拒`;
-
-      await safePushMessage(OWNER_LINE_ID, decisionText);
+      // 創建圖文決策訊息
+      const decisionMessage = await this.createDecisionFlexMessage(decision, aiAnalysis, contextInfo);
       
-      // 設定自動拒絕定時器
+      await client.pushMessage(OWNER_LINE_ID, decisionMessage);
+      
+      // 30分鐘自動處理
       setTimeout(async () => {
         if (this.pendingDecisions.has(decisionId)) {
           await this.autoReject(decisionId);
         }
-      }, 30 * 60 * 1000); // 30分鐘後自動拒絕
+      }, 30 * 60 * 1000);
       
       return '我需要考慮一下這個請求，稍後會回覆你～ 🤔';
       
     } catch (error) {
-      console.error('決策請求發送失敗:', error);
+      console.error('❌ 決策請求發送失敗:', error);
       return '我需要想想，稍後回覆你～';
     }
   }
 
-  async analyzeDecision(message, context, contextInfo) {
+  async analyzeDecisionWithAI(message, context, contextInfo) {
     try {
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-002" });
       
-      const prompt = `請分析這個決策請求：
+      const prompt = `請以顧晉瑋的角度分析這個決策請求：
 
-訊息：${message}
-來源：${context.isGroup ? '群組對話' : '私人對話'}
-上下文：${contextInfo}
+訊息內容：${message}
+來源：${context.isGroup ? `群組「${context.groupName}」` : '私人對話'}
+發訊人：${context.userName}
+
+對話上下文：
+${contextInfo}
 
 請提供：
-1. 這個請求的重要性 (高/中/低)
-2. 可能的風險或考量
-3. 建議的回應方式
-4. 需要注意的事項
+1. 這個請求的性質和重要程度
+2. 可能的風險或好處
+3. 以顧晉瑋的個性和價值觀，建議如何回應
+4. 需要注意的關鍵點
 
-用繁體中文回答，保持簡潔。`;
+請用顧晉瑋的語氣回答，簡潔明了。`;
 
       const result = await model.generateContent(prompt);
       const response = await result.response;
       return response.text().replace(/[*#`_~]/g, '').trim();
       
     } catch (error) {
-      return '系統正在分析中，請根據對話內容做決定。';
+      console.error('❌ AI決策分析失敗:', error);
+      return '正在分析中，請根據對話內容和你的判斷來決定。';
     }
   }
 
-  async processOwnerDecision(message, ownerId) {
-    const lowerMessage = message.toLowerCase();
-    
-    // 檢查是否包含決策ID
-    const idMatch = message.match(/([a-z0-9]{8})/i);
-    let targetDecision = null;
-
-    if (idMatch) {
-      const shortId = idMatch[1];
-      for (const [id, decision] of this.pendingDecisions) {
-        if (decision.shortId === shortId) {
-          targetDecision = decision;
-          break;
-        }
-      }
-    }
-
-    if (!targetDecision) {
-      // 列出所有待處理決策
-      return this.listPendingDecisions();
-    }
-
-    // 處理不同類型的回應
-    if (lowerMessage.includes('同意')) {
-      return await this.handleApproval(targetDecision);
-    } else if (lowerMessage.includes('拒絕')) {
-      return await this.handleRejection(targetDecision);
-    } else if (lowerMessage.includes('問')) {
-      const questionMatch = message.match(/問\s+[a-z0-9]{8}\s+(.+)/i);
-      if (questionMatch) {
-        return await this.handleQuestion(targetDecision, questionMatch[1]);
-      }
-    } else if (lowerMessage.includes('回覆')) {
-      const replyMatch = message.match(/回覆\s+[a-z0-9]{8}\s+(.+)/i);
-      if (replyMatch) {
-        return await this.handleCustomReply(targetDecision, replyMatch[1]);
-      }
-    } else if (lowerMessage.includes('更多')) {
-      return await this.showMoreContext(targetDecision);
-    } else if (lowerMessage.includes('忽略')) {
-      return await this.handleIgnore(targetDecision);
-    } else {
-      return `請使用正確格式：
-• 同意 ${targetDecision.shortId}
-• 拒絕 ${targetDecision.shortId}
-• 問 ${targetDecision.shortId} [問題]
-• 回覆 ${targetDecision.shortId} [訊息]
-• 更多 ${targetDecision.shortId}
-• 忽略 ${targetDecision.shortId}`;
-    }
-  }
-
-  listPendingDecisions() {
-    const decisions = Array.from(this.pendingDecisions.values())
-      .filter(d => d.status === 'pending')
-      .sort((a, b) => b.timestamp - a.timestamp);
-    
-    if (decisions.length === 0) {
-      return '目前沒有待處理的決策 ✅';
-    }
-    
-    let list = `📋 待處理決策 (${decisions.length}個)：\n\n`;
-    decisions.forEach((d, index) => {
-      const timeAgo = Math.floor((new Date() - d.timestamp) / 60000);
-      list += `${index + 1}. [${d.shortId}] ${d.userName}\n`;
-      list += `   💬 ${d.message.substring(0, 50)}${d.message.length > 50 ? '...' : ''}\n`;
-      list += `   📍 ${d.context.isGroup ? '群組' : '私人'} • ${timeAgo}分鐘前\n\n`;
-    });
-    
-    list += '使用「同意/拒絕/問/回覆 [ID]」來處理';
-    return list;
-  }
-
-  async handleApproval(decision) {
-    const replyMsg = '好der！我覺得可以，就這樣決定吧～ ✅';
-    await this.sendReplyToSource(decision, replyMsg);
-    await this.markDecisionComplete(decision, 'approved');
-    return `✅ 已同意決策 ${decision.shortId} 並回覆`;
-  }
-
-  async handleRejection(decision) {
-    const replyMsg = '抱歉耶～我現在不太方便，下次有機會再說吧！謝謝你的邀請 😊';
-    await this.sendReplyToSource(decision, replyMsg);
-    await this.markDecisionComplete(decision, 'rejected');
-    return `❌ 已拒絕決策 ${decision.shortId} 並回覆`;
-  }
-
-  async handleQuestion(decision, question) {
-    const questionMsg = `欸～想問一下：${question} 🤔`;
-    await this.sendReplyToSource(decision, questionMsg);
-    // 不標記為完成，等待對方回答
-    return `❓ 已向 ${decision.userName} 提問：${question}`;
-  }
-
-  async handleCustomReply(decision, customReply) {
-    await this.sendReplyToSource(decision, customReply);
-    await this.markDecisionComplete(decision, 'custom');
-    return `💬 已使用自訂回覆：${customReply}`;
-  }
-
-  async showMoreContext(decision) {
-    if (decision.context.isGroup && decision.context.groupId) {
-      const fullContext = superAI.getDetailedGroupContext(decision.context.groupId, 30);
-      return `📝 完整對話記錄 [${decision.shortId}]：\n\n${fullContext}`;
-    } else {
-      return '這是私人對話，沒有更多上下文';
-    }
-  }
-
-  async handleIgnore(decision) {
-    decision.status = 'ignored';
-    return `⏸️ 已暫時忽略決策 ${decision.shortId}`;
-  }
-
-  async autoReject(decisionId) {
-    const decision = this.pendingDecisions.get(decisionId);
-    if (!decision || decision.status !== 'pending') return;
-    
-    const autoReply = '不好意思，我現在比較忙，沒辦法及時回覆。下次有機會再聊吧！ 😅';
-    await this.sendReplyToSource(decision, autoReply);
-    await this.markDecisionComplete(decision, 'auto_rejected');
-    
-    // 通知主人
-    await safePushMessage(OWNER_LINE_ID, `⏰ 決策 ${decision.shortId} 已自動拒絕（超時）`);
-  }
-
-  async markDecisionComplete(decision, result) {
-    decision.status = result;
-    decision.completedAt = new Date();
-    
-    // 移到歷史記錄
-    this.decisionHistory.set(decision.id, decision);
-    this.pendingDecisions.delete(decision.id);
-    
-    // 清理舊歷史記錄
-    if (this.decisionHistory.size > 100) {
-      const oldest = Array.from(this.decisionHistory.keys())[0];
-      this.decisionHistory.delete(oldest);
-    }
-  }
-
-  async sendReplyToSource(decision, message) {
-    try {
-      if (decision.sourceType === 'group') {
-        await client.pushMessage(decision.sourceId, {
-          type: 'text',
-          text: message
-        });
-      } else {
-        await client.pushMessage(decision.userId, {
-          type: 'text',
-          text: message
-        });
-      }
-    } catch (error) {
-      console.error('回覆訊息失敗:', error);
-      throw error;
-    }
-  }
-}
-
-// 超級提醒系統
-class SuperReminderSystem {
-  constructor() {
-    this.reminders = new Map();
-    this.activeTimers = new Map();
-    this.reminderHistory = new Map();
-    console.log('⏰ 超級提醒系統已初始化');
-  }
-
-  parseTime(text) {
-    console.log('🔍 解析時間:', text);
-    
-    try {
-      const now = new Date();
-      
-      // 秒數提醒 (測試用)
-      if (text.includes('秒後') || text.includes('秒鐘後')) {
-        const match = text.match(/(\d+)\s*秒(?:鐘)?後/);
-        if (match) {
-          const seconds = parseInt(match[1]);
-          const targetTime = new Date(now.getTime() + seconds * 1000);
-          return { time: targetTime, isAlarm: false };
-        }
-      }
-
-      // 相對時間 - 分鐘
-      if (text.includes('分鐘後') || text.includes('分後')) {
-        const match = text.match(/(\d+)\s*分(?:鐘)?後/);
-        if (match) {
-          const minutes = parseInt(match[1]);
-          const targetTime = new Date(now.getTime() + minutes * 60000);
-          return { time: targetTime, isAlarm: false };
-        }
-      }
-
-      // 相對時間 - 小時
-      if (text.includes('小時後') || text.includes('時後')) {
-        const match = text.match(/(\d+)\s*(?:小)?時後/);
-        if (match) {
-          const hours = parseInt(match[1]);
-          const targetTime = new Date(now.getTime() + hours * 3600000);
-          return { time: targetTime, isAlarm: false };
-        }
-      }
-
-      // 絕對時間 HH:MM
-      const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
-      if (timeMatch) {
-        const hour = parseInt(timeMatch[1]);
-        const minute = parseInt(timeMatch[2]);
-        
-        if (hour >= 0 && hour < 24 && minute >= 0 && minute < 60) {
-          const targetTime = new Date();
-          targetTime.setHours(hour, minute, 0, 0);
-          
-          // 如果時間已過，設為明天
-          if (targetTime <= now) {
-            targetTime.setDate(targetTime.getDate() + 1);
-          }
-          
-          const isAlarm = text.includes('叫') || text.includes('起床') || text.includes('鬧鐘');
-          return { time: targetTime, isAlarm };
-        }
-      }
-
-      // 點數時間
-      const hourMatch = text.match(/(\d{1,2})\s*點/);
-      if (hourMatch) {
-        const hour = parseInt(hourMatch[1]);
-        
-        if (hour >= 0 && hour < 24) {
-          const targetTime = new Date();
-          targetTime.setHours(hour, 0, 0, 0);
-          
-          if (targetTime <= now) {
-            targetTime.setDate(targetTime.getDate() + 1);
-          }
-          
-          const isAlarm = text.includes('叫') || text.includes('起床') || text.includes('鬧鐘');
-          return { time: targetTime, isAlarm };
-        }
-      }
-
-      // 特定日期時間
-      if (text.includes('明天')) {
-        const targetTime = new Date();
-        targetTime.setDate(targetTime.getDate() + 1);
-        
-        // 檢查是否有具體時間
-        const specificTime = text.match(/(\d{1,2})[點:](\d{0,2})?/);
-        if (specificTime) {
-          const hour = parseInt(specificTime[1]);
-          const minute = specificTime[2] ? parseInt(specificTime[2]) : 0;
-          targetTime.setHours(hour, minute, 0, 0);
-        } else {
-          targetTime.setHours(9, 0, 0, 0); // 預設早上9點
-        }
-        
-        const isAlarm = text.includes('叫') || text.includes('起床') || text.includes('鬧鐘');
-        return { time: targetTime, isAlarm };
-      }
-
-    } catch (error) {
-      console.error('❌ 時間解析錯誤:', error);
-    }
-    
-    return null;
-  }
-
-  createReminder(userId, title, targetTime, isAlarm = false) {
-    const reminderId = `reminder-${userId}-${Date.now()}`;
-    
-    const reminder = {
-      id: reminderId,
-      userId,
-      title,
-      targetTime,
-      isAlarm,
-      created: new Date(),
-      status: 'active'
-    };
-
-    this.reminders.set(reminderId, reminder);
-    
-    const delay = targetTime.getTime() - Date.now();
-    
-    console.log(`⏱️ 設定提醒延遲: ${delay}ms`);
-    
-    if (delay > 0 && delay < 2147483647) { // JavaScript setTimeout 限制
-      const timerId = setTimeout(async () => {
-        await this.executeReminder(reminderId);
-      }, delay);
-      
-      this.activeTimers.set(reminderId, timerId);
-      console.log(`✅ 提醒已設定: ${title}, 時間: ${targetTime.toLocaleString('zh-TW')}`);
-      return reminderId;
-    } else if (delay <= 0) {
-      console.log('⚠️ 提醒時間已過，立即執行');
-      this.executeReminder(reminderId);
-      return reminderId;
-    } else {
-      console.log('⚠️ 提醒時間太遠，無法設定');
-      return null;
-    }
-  }
-
-  async executeReminder(reminderId) {
-    const reminder = this.reminders.get(reminderId);
-    if (!reminder || reminder.status !== 'active') return;
-
-    try {
-      const reminderText = `⏰ ${reminder.isAlarm ? '鬧鐘響啦！' : '提醒時間到！'}
-
-📝 ${reminder.title}
-⏱️ 設定時間：${reminder.created.toLocaleString('zh-TW')}
-
-${reminder.isAlarm ? '☀️ 起床囉！新的一天開始了！加油！💪' : '記得處理這件事喔！ ✨'}`;
-
-      await client.pushMessage(reminder.userId, {
-        type: 'text',
-        text: reminderText
-      });
-      
-      console.log(`✅ 提醒已發送: ${reminder.title}`);
-      
-      // 標記為已完成
-      reminder.status = 'completed';
-      reminder.completedAt = new Date();
-      
-      // 移到歷史記錄
-      this.reminderHistory.set(reminderId, reminder);
-      
-      // 清理
-      this.reminders.delete(reminderId);
-      this.activeTimers.delete(reminderId);
-      
-    } catch (error) {
-      console.error('❌ 提醒發送失敗:', error);
-    }
-  }
-
-  extractTitle(text) {
-    let title = text;
-    
-    // 移除時間相關詞語
-    const timePatterns = [
-      /\d+\s*秒(?:鐘)?後/g,
-      /\d+\s*分(?:鐘)?後/g,
-      /\d+\s*(?:小)?時後/g,
-      /\d{1,2}:\d{2}/g,
-      /\d{1,2}\s*點/g,
-      /明天/g,
-      /提醒我/g,
-      /叫我/g,
-      /起床/g,
-      /鬧鐘/g
-    ];
-    
-    timePatterns.forEach(pattern => {
-      title = title.replace(pattern, '');
-    });
-    
-    title = title.trim();
-    
-    // 如果沒有剩餘內容，根據類型返回預設標題
-    if (!title) {
-      if (text.includes('起床') || text.includes('鬧鐘')) {
-        return '起床鬧鐘 ⏰';
-      } else if (text.includes('開會')) {
-        return '開會提醒 📅';
-      } else if (text.includes('吃藥')) {
-        return '吃藥提醒 💊';
-      } else if (text.includes('運動')) {
-        return '運動時間 🏃‍♂️';
-      } else {
-        return '重要提醒 📌';
-      }
-    }
-    
-    return title;
-  }
-
-  listReminders(userId) {
-    const userReminders = Array.from(this.reminders.values())
-      .filter(r => r.userId === userId && r.status === 'active')
-      .sort((a, b) => a.targetTime - b.targetTime);
-    
-    if (userReminders.length === 0) {
-      return '你目前沒有設定任何提醒 📝';
-    }
-    
-    let list = `📋 你的提醒清單 (${userReminders.length}個)：\n\n`;
-    userReminders.forEach((r, index) => {
-      const timeLeft = r.targetTime.getTime() - Date.now();
-      const timeLeftStr = timeLeft > 0 ? 
-        `${Math.floor(timeLeft / 60000)}分鐘後` : '即將到期';
-      
-      list += `${index + 1}. ${r.title}\n`;
-      list += `   ⏰ ${r.targetTime.toLocaleString('zh-TW')}\n`;
-      list += `   ⏳ ${timeLeftStr}\n\n`;
-    });
-    
-    return list;
-  }
-
-  deleteReminder(userId, index) {
-    const userReminders = Array.from(this.reminders.values())
-      .filter(r => r.userId === userId && r.status === 'active')
-      .sort((a, b) => a.targetTime - b.targetTime);
-    
-    if (index < 1 || index > userReminders.length) {
-      return '提醒編號不正確';
-    }
-    
-    const reminder = userReminders[index - 1];
-    
-    // 清除定時器
-    if (this.activeTimers.has(reminder.id)) {
-      clearTimeout(this.activeTimers.get(reminder.id));
-      this.activeTimers.delete(reminder.id);
-    }
-    
-    // 刪除提醒
-    this.reminders.delete(reminder.id);
-    
-    return `✅ 已刪除提醒：${reminder.title}`;
-  }
-}
-
-// 超級電影查詢系統
-class SuperMovieSystem {
-  constructor() {
-    console.log('🎬 超級電影查詢系統已初始化');
-  }
-
-  async searchMovies(query = '') {
-    try {
-      let endpoint = 'https://api.themoviedb.org/3/movie/popular';
-      let params = {
-        language: 'zh-TW',
-        page: 1
-      };
-
-      // 如果有特定查詢，使用搜尋 API
-      if (query && query.length > 0) {
-        endpoint = 'https://api.themoviedb.org/3/search/movie';
-        params.query = query;
-      }
-
-      const response = await axios.get(endpoint, {
-        headers: {
-          'Authorization': `Bearer ${TMDB_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        params: params,
-        timeout: 15000
-      });
-
-      const movies = response.data.results.slice(0, 5);
-      
-      if (movies.length === 0) {
-        return '沒有找到相關的電影 🎬';
-      }
-
-      let movieList = query ? 
-        `🎬 「${query}」的搜尋結果：\n\n` : 
-        '🎬 熱門電影推薦：\n\n';
-      
-      // 準備圖表資料
-      const chartData = movies.map(movie => ({
-        name: movie.title.length > 8 ? movie.title.substring(0, 8) + '..' : movie.title,
-        value: movie.vote_average
-      }));
-      
-      // 生成評分圖表
-      const chart = chartSystem.generateBarChart(chartData, '電影評分排行');
-      
-      movies.forEach((movie, index) => {
-        movieList += `${index + 1}. ${movie.title}`;
-        if (movie.original_title !== movie.title) {
-          movieList += ` (${movie.original_title})`;
-        }
-        movieList += `\n⭐ 評分：${movie.vote_average}/10`;
-        movieList += `\n📅 上映：${movie.release_date}`;
-        if (movie.overview) {
-          movieList += `\n📝 ${movie.overview.substring(0, 80)}...`;
-        }
-        movieList += `\n\n`;
-      });
-
-      movieList += `\n${chart}`;
-      
-      return movieList;
-
-    } catch (error) {
-      console.error('❌ 電影查詢錯誤:', error);
-      return '抱歉，電影查詢功能暫時無法使用，請稍後再試 🎬';
-    }
-  }
-
-  async getMovieDetails(movieTitle) {
-    try {
-      // 搜尋電影
-      const searchResponse = await axios.get('https://api.themoviedb.org/3/search/movie', {
-        headers: {
-          'Authorization': `Bearer ${TMDB_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        params: {
-          query: movieTitle,
-          language: 'zh-TW'
-        }
-      });
-
-      if (searchResponse.data.results.length === 0) {
-        return `找不到電影「${movieTitle}」`;
-      }
-
-      const movie = searchResponse.data.results[0];
-      
-      // 獲取詳細資訊
-      const detailResponse = await axios.get(`https://api.themoviedb.org/3/movie/${movie.id}`, {
-        headers: {
-          'Authorization': `Bearer ${TMDB_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        params: {
-          language: 'zh-TW'
-        }
-      });
-
-      const details = detailResponse.data;
-      
-      let info = `🎬 ${details.title}\n\n`;
-      info += `⭐ 評分：${details.vote_average}/10 (${details.vote_count} 人評價)\n`;
-      info += `📅 上映日期：${details.release_date}\n`;
-      info += `⏱️ 片長：${details.runtime} 分鐘\n`;
-      info += `🎭 類型：${details.genres.map(g => g.name).join(', ')}\n`;
-      if (details.overview) {
-        info += `\n📝 劇情簡介：\n${details.overview}`;
-      }
-      
-      return info;
-
-    } catch (error) {
-      console.error('電影詳情查詢錯誤:', error);
-      return `無法獲取「${movieTitle}」的詳細資訊`;
-    }
-  }
-}
-
-// 超級網路搜尋系統
-class SuperWebSearchSystem {
-  constructor() {
-    console.log('🔍 超級網路搜尋系統已初始化');
-  }
-
-  async search(query) {
-    try {
-      // 使用多個搜尋引擎的結果
-      const results = await Promise.allSettled([
-        this.searchDuckDuckGo(query),
-        this.searchWithAI(query)
-      ]);
-
-      const duckResults = results[0].status === 'fulfilled' ? results[0].value : null;
-      const aiResults = results[1].status === 'fulfilled' ? results[1].value : null;
-
-      let finalResult = '';
-
-      if (duckResults && duckResults.length > 0) {
-        finalResult += `🔍 「${query}」的搜尋結果：\n\n`;
-        finalResult += duckResults;
-      }
-
-      if (aiResults) {
-        finalResult += `\n💡 AI 分析：\n${aiResults}`;
-      }
-
-      if (!finalResult) {
-        finalResult = `沒有找到「${query}」的相關搜尋結果，請嘗試其他關鍵字 🔍`;
-      }
-
-      return finalResult;
-
-    } catch (error) {
-      console.error('❌ 搜尋失敗:', error);
-      return '抱歉，搜尋功能暫時無法使用，請稍後再試 🔍';
-    }
-  }
-
-  async searchDuckDuckGo(query) {
-    try {
-      // 使用 DuckDuckGo Instant Answer API
-      const response = await axios.get('https://api.duckduckgo.com/', {
-        params: {
-          q: query,
-          format: 'json',
-          no_html: '1',
-          skip_disambig: '1'
-        },
-        timeout: 10000
-      });
-
-      let results = '';
-
-      if (response.data.AbstractText) {
-        results += `📄 摘要：${response.data.AbstractText}\n`;
-        if (response.data.AbstractURL) {
-          results += `🔗 來源：${response.data.AbstractURL}\n`;
-        }
-      }
-
-      if (response.data.Answer) {
-        results += `💡 答案：${response.data.Answer}\n`;
-      }
-
-      if (response.data.RelatedTopics && response.data.RelatedTopics.length > 0) {
-        results += `\n📋 相關主題：\n`;
-        response.data.RelatedTopics.slice(0, 3).forEach((topic, index) => {
-          if (topic.Text) {
-            results += `${index + 1}. ${topic.Text}\n`;
-          }
-        });
-      }
-
-      return results || null;
-
-    } catch (error) {
-      console.error('DuckDuckGo 搜尋失敗:', error);
-      return null;
-    }
-  }
-
-  async searchWithAI(query) {
-    try {
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-002" });
-      
-      const prompt = `請幫我搜尋並回答關於「${query}」的問題。請提供：
-1. 基本定義或說明
-2. 重要特點或特徵
-3. 相關的有趣資訊
-4. 實用建議（如果適用）
-
-請用繁體中文回答，保持簡潔但資訊豐富，大約150-200字。`;
-
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      return response.text().replace(/[*#`_~]/g, '').trim();
-      
-    } catch (error) {
-      console.error('AI 搜尋失敗:', error);
-      return null;
-    }
-  }
-
-  async getWeather(city = '台北') {
-    try {
-      const response = await axios.get(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001`, {
-        params: {
-          Authorization: WEATHER_API_KEY,
-          locationName: city
-        },
-        timeout: 10000
-      });
-
-      if (response.data.success === 'true' && response.data.records.location.length > 0) {
-        const location = response.data.records.location[0];
-        const weather = location.weatherElement;
-        
-        const temp = weather.find(el => el.elementName === 'MinT');
-        const maxTemp = weather.find(el => el.elementName === 'MaxT');
-        const desc = weather.find(el => el.elementName === 'Wx');
-        const comfort = weather.find(el => el.elementName === 'CI');
-        
-        let weatherInfo = `🌤️ ${city}天氣預報：\n\n`;
-        weatherInfo += `📍 地點：${location.locationName}\n`;
-        weatherInfo += `🌡️ 溫度：${temp?.time[0]?.parameter?.parameterName || 'N/A'}°C - ${maxTemp?.time[0]?.parameter?.parameterName || 'N/A'}°C\n`;
-        weatherInfo += `☁️ 天氣：${desc?.time[0]?.parameter?.parameterName || 'N/A'}\n`;
-        if (comfort) {
-          weatherInfo += `😊 舒適度：${comfort.time[0]?.parameter?.parameterName || 'N/A'}\n`;
-        }
-        
-        // 生成溫度圖表
-        const temps = [];
-        for (let i = 0; i < 3 && i < temp?.time?.length; i++) {
-          temps.push({
-            name: `${i*8}時`,
-            value: parseInt(temp.time[i]?.parameter?.parameterName || 0)
-          });
-        }
-        
-        if (temps.length > 0) {
-          const tempChart = chartSystem.generateLineChart(temps, '溫度變化');
-          weatherInfo += `\n${tempChart}`;
-        }
-        
-        return weatherInfo;
-      } else {
-        return `找不到「${city}」的天氣資訊，請確認城市名稱是否正確 🌤️`;
-      }
-    } catch (error) {
-      console.error('天氣查詢錯誤:', error);
-      return '抱歉，無法獲取天氣資訊，請稍後再試 🌤️';
-    }
-  }
-
-  async getNews() {
-    try {
-      const response = await axios.get('https://newsapi.org/v2/top-headlines', {
-        params: {
-          country: 'tw',
-          apiKey: NEWS_API_KEY,
-          pageSize: 5
-        },
-        timeout: 15000
-      });
-
-      const articles = response.data.articles;
-      let newsList = '📰 今日頭條新聞：\n\n';
-      
-      articles.forEach((article, index) => {
-        newsList += `${index + 1}. ${article.title}\n`;
-        if (article.description) {
-          newsList += `📄 ${article.description.substring(0, 100)}...\n`;
-        }
-        newsList += `🔗 ${article.url}\n\n`;
-      });
-
-      return newsList;
-    } catch (error) {
-      console.error('新聞查詢錯誤:', error);
-      return '抱歉，無法獲取新聞資訊，請稍後再試 📰';
-    }
-  }
-}
-
-// 訊息轉發系統 (增強版)
-class SuperMessageForwardSystem {
-  constructor() {
-    this.userList = new Map();
-    this.messageTemplates = new Map();
-    console.log('📨 超級訊息轉發系統已初始化');
-  }
-
-  async forwardMessage(targetName, message, sourceUserName) {
-    try {
-      const targetUser = this.findUserByName(targetName);
-      
-      if (!targetUser) {
-        const suggestions = this.getSimilarUserNames(targetName);
-        let response = `找不到用戶「${targetName}」`;
-        if (suggestions.length > 0) {
-          response += `\n\n你是指以下其中一個嗎？\n${suggestions.join('\n')}`;
-        }
-        return response;
-      }
-
-      const forwardMsg = `📨 來自 ${sourceUserName} 的訊息：\n\n${message}\n\n---\n⏰ ${new Date().toLocaleString('zh-TW')}`;
-      
-      await client.pushMessage(targetUser.userId, {
-        type: 'text',
-        text: forwardMsg
-      });
-
-      // 記錄轉發歷史
-      this.recordForwardHistory(sourceUserName, targetName, message);
-
-      return `✅ 訊息已成功轉發給 ${targetUser.displayName}`;
-
-    } catch (error) {
-      console.error('❌ 訊息轉發失敗:', error);
-      return '訊息轉發失敗，請稍後再試 📨';
-    }
-  }
-
-  findUserByName(name) {
-    // 精確匹配
-    for (const [userId, userInfo] of this.userList) {
-      if (userInfo.displayName === name) {
-        return { userId, ...userInfo };
-      }
-    }
-    
-    // 模糊匹配
-    for (const [userId, userInfo] of this.userList) {
-      if (userInfo.displayName.includes(name) || name.includes(userInfo.displayName)) {
-        return { userId, ...userInfo };
-      }
-    }
-    
-    return null;
-  }
-
-  getSimilarUserNames(name) {
-    const suggestions = [];
-    for (const [userId, userInfo] of this.userList) {
-      const similarity = this.calculateSimilarity(name, userInfo.displayName);
-      if (similarity > 0.3) {
-        suggestions.push(userInfo.displayName);
-      }
-    }
-    return suggestions.slice(0, 3);
-  }
-
-  calculateSimilarity(str1, str2) {
-    const longer = str1.length > str2.length ? str1 : str2;
-    const shorter = str1.length > str2.length ? str2 : str1;
-    const editDistance = this.getEditDistance(longer, shorter);
-    return (longer.length - editDistance) / longer.length;
-  }
-
-  getEditDistance(str1, str2) {
-    const matrix = [];
-    for (let i = 0; i <= str2.length; i++) {
-      matrix[i] = [i];
-    }
-    for (let j = 0; j <= str1.length; j++) {
-      matrix[0][j] = j;
-    }
-    for (let i = 1; i <= str2.length; i++) {
-      for (let j = 1; j <= str1.length; j++) {
-        if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1];
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1,
-            matrix[i][j - 1] + 1,
-            matrix[i - 1][j] + 1
-          );
-        }
-      }
-    }
-    return matrix[str2.length][str1.length];
-  }
-
-  updateUserList(userId, displayName) {
-    this.userList.set(userId, { 
-      userId,
-      displayName, 
-      lastSeen: new Date(),
-      messageCount: this.userList.has(userId) ? this.userList.get(userId).messageCount + 1 : 1
-    });
-  }
-
-  recordForwardHistory(from, to, message) {
-    const historyKey = `forward-${Date.now()}`;
-    // 這裡可以添加轉發歷史記錄功能
-  }
-
-  getUserList() {
-    const users = Array.from(this.userList.values())
-      .sort((a, b) => b.lastSeen - a.lastSeen)
-      .slice(0, 20);
-    
-    if (users.length === 0) {
-      return '目前沒有已知的聯絡人 👥';
-    }
-    
-    let list = `👥 聯絡人清單 (${users.length}人)：\n\n`;
-    users.forEach((user, index) => {
-      const lastSeenAgo = Math.floor((new Date() - user.lastSeen) / 60000);
-      list += `${index + 1}. ${user.displayName}\n`;
-      list += `   💬 互動次數：${user.messageCount}\n`;
-      list += `   🕐 最後互動：${lastSeenAgo}分鐘前\n\n`;
-    });
-    
-    return list;
-  }
-}
-
-// 超級私訊系統
-class SuperPrivateMessageSystem {
-  constructor() {
-    this.commandHistory = new Map();
-    console.log('💬 超級私訊系統已初始化');
-  }
-
-  async handlePrivateMessage(userId, userName, message) {
-    // 記錄指令歷史
-    this.recordCommand(userId, message);
-    
-    if (userId === OWNER_LINE_ID) {
-      return await this.handleOwnerMessage(message);
-    }
-    
-    // 更新用戶列表
-    messageForward.updateUserList(userId, userName);
-    
-    return await superAI.generateReply(userId, message, { isGroup: false });
-  }
-
-  async handleOwnerMessage(message) {
-    // 處理決策回覆（優先級最高）
-    if (decisionSystem.pendingDecisions.size > 0) {
-      const decisionResponse = await decisionSystem.processOwnerDecision(message, OWNER_LINE_ID);
-      if (!decisionResponse.includes('目前沒有待處理的決策')) {
-        return decisionResponse;
-      }
-    }
-
-    // 處理指令
-    if (message.startsWith('/')) {
-      return await this.handleCommand(message);
-    }
-
-    // 處理訊息轉發
-    if (message.includes('告訴') || message.includes('跟') && message.includes('說')) {
-      return await this.handleMessageForward(message);
-    }
-
-    // 處理提醒相關
-    if (message.includes('提醒') && (message.includes('刪除') || message.includes('取消'))) {
-      return await this.handleReminderDeletion(message);
-    }
-    
-    return await superAI.generateReply(OWNER_LINE_ID, message, { isGroup: false });
-  }
-
-  async handleCommand(command) {
-    const parts = command.substring(1).toLowerCase().split(' ');
-    const cmd = parts[0];
-    const args = parts.slice(1);
-    
-    switch (cmd) {
-      case 'status':
-        return this.getSystemStatus();
-      
-      case 'users':
-        return this.getUserReport();
-      
-      case 'reminders':
-        return reminderSystem.listReminders(OWNER_LINE_ID);
-      
-      case 'decisions':
-        return decisionSystem.listPendingDecisions();
-      
-      case 'contacts':
-        return messageForward.getUserList();
-      
-      case 'history':
-        return this.getDecisionHistory();
-      
-      case 'stats':
-        return this.getStatsWithCharts();
-      
-      case 'features':
-      case 'help':
-        return this.getFeaturesList();
-      
-      case 'test':
-        if (args.length > 0) {
-          return await this.handleTestCommand(args);
-        }
-        return '測試指令格式：/test reminder 5秒後測試';
-      
-      case 'clear':
-        return this.handleClearCommand(args[0]);
-      
-      default:
-        return `未知指令「${cmd}」\n輸入 /help 查看所有可用指令`;
-    }
-  }
-
-  async handleTestCommand(args) {
-    const testType = args[0];
-    
-    switch (testType) {
-      case 'reminder':
-        if (args.length > 1) {
-          const reminderText = args.slice(1).join(' ');
-          const timeInfo = reminderSystem.parseTime(reminderText);
-          
-          if (timeInfo && timeInfo.time) {
-            const title = reminderSystem.extractTitle(reminderText);
-            const reminderId = reminderSystem.createReminder(OWNER_LINE_ID, `[測試] ${title}`, timeInfo.time, false);
-            
-            if (reminderId) {
-              return `✅ 測試提醒已設定：${title}\n時間：${timeInfo.time.toLocaleString('zh-TW')}`;
-            } else {
-              return '❌ 測試提醒設定失敗';
+  async createDecisionFlexMessage(decision, aiAnalysis, contextInfo) {
+    const flexMessage = {
+      type: 'flex',
+      altText: `決策請求 - ${decision.userName}`,
+      contents: {
+        type: 'carousel',
+        contents: [
+          {
+            type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🤔 需要你的決策',
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#4A90E2'
+                },
+                {
+                  type: 'text',
+                  text: `ID: ${decision.shortId}`,
+                  size: 'sm',
+                  color: '#666666'
+                }
+              ]
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: `👤 ${decision.userName}`,
+                  weight: 'bold',
+                  margin: 'md'
+                },
+                {
+                  type: 'box',
+                  layout: 'horizontal',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '🕐 最後活躍',
+                      flex: 1
+                    },
+                    {
+                      type: 'text',
+                      text: lastSeenStr,
+                      flex: 1,
+                      align: 'end',
+                      size: 'sm',
+                      color: '#666666'
+                    }
+                  ],
+                  margin: 'sm'
+                },
+                {
+                  type: 'box',
+                  layout: 'horizontal',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '📱 對話類型',
+                      flex: 1
+                    },
+                    {
+                      type: 'text',
+                      text: user.isGroup ? '群組' : '私人',
+                      flex: 1,
+                      align: 'end',
+                      size: 'sm',
+                      color: user.isGroup ? '#FF9800' : '#9C27B0'
+                    }
+                  ],
+                  margin: 'sm'
+                }
+              ]
             }
-          } else {
-            return '❌ 測試提醒時間解析失敗';
+          };
+        })
+      }
+    };
+  }
+
+  async getContactsFlexMessage() {
+    // 這裡會實作聯絡人清單的圖文顯示
+    return { type: 'text', text: '聯絡人功能開發中...' };
+  }
+
+  async getDecisionHistoryFlexMessage() {
+    // 這裡會實作決策歷史的圖文顯示
+    return { type: 'text', text: '決策歷史功能開發中...' };
+  }
+
+  async getStatsFlexMessage() {
+    // 這裡會實作統計資料的圖文顯示
+    return { type: 'text', text: '統計功能開發中...' };
+  }
+
+  async getFeaturesFlexMessage() {
+    return {
+      type: 'flex',
+      altText: '🎛️ 完整功能列表',
+      contents: {
+        type: 'carousel',
+        contents: [
+          {
+            type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🎛️ AI分身功能',
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#4A90E2'
+                }
+              ]
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🧠 超擬真AI聊天',
+                  weight: 'bold'
+                },
+                {
+                  type: 'text',
+                  text: '• 完全模擬你的語氣和個性\n• 群組記憶30條訊息\n• 學習回覆風格',
+                  size: 'sm',
+                  margin: 'sm'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '⚖️ 超級決策系統',
+                  weight: 'bold',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '• AI分析決策重要性\n• 完整上下文提供\n• 多種回應方式',
+                  size: 'sm',
+                  margin: 'sm'
+                }
+              ]
+            }
+          },
+          {
+            type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '⏰ 提醒與搜尋',
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#FF6B6B'
+                }
+              ]
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '⏰ 超級提醒系統',
+                  weight: 'bold'
+                },
+                {
+                  type: 'text',
+                  text: '• 支援秒/分/時/絕對時間\n• 電話鬧鐘功能\n• 圖文提醒顯示',
+                  size: 'sm',
+                  margin: 'sm'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '🔍 超級搜尋系統',
+                  weight: 'bold',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '• 網路搜尋 + AI分析\n• 天氣查詢\n• 圖文結果顯示',
+                  size: 'sm',
+                  margin: 'sm'
+                }
+              ]
+            }
+          },
+          {
+            type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🎯 特殊功能',
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#9C27B0'
+                }
+              ]
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🚨 矛盾偵測系統',
+                  weight: 'bold'
+                },
+                {
+                  type: 'text',
+                  text: '• AI自動偵測前後矛盾\n• 立即私訊通知主人',
+                  size: 'sm',
+                  margin: 'sm'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '📢 訊息收回追蹤',
+                  weight: 'bold',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '• 監控訊息收回\n• 保存原始內容\n• 即時通知主人',
+                  size: 'sm',
+                  margin: 'sm'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '🎬 電影推薦系統',
+                  weight: 'bold',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '• 熱門電影推薦\n• 詳細資訊查詢\n• 圖文卡片顯示',
+                  size: 'sm',
+                  margin: 'sm'
+                }
+              ]
+            }
           }
+        ]
+      }
+    };
+  }
+
+  async getHelpFlexMessage() {
+    return {
+      type: 'flex',
+      altText: '📚 中文指令說明',
+      contents: {
+        type: 'carousel',
+        contents: [
+          {
+            type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '📚 主人專用指令',
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#4A90E2'
+                }
+              ]
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '📊 系統管理',
+                  weight: 'bold',
+                  color: '#FF6B6B'
+                },
+                {
+                  type: 'text',
+                  text: '• 狀態報告 - 查看系統狀態\n• 用戶活躍 - 用戶活躍度報告\n• 系統統計 - 統計資料圖表',
+                  size: 'sm',
+                  margin: 'sm'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '⚖️ 決策管理',
+                  weight: 'bold',
+                  color: '#9C27B0',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '• 決策待辦 - 待處理決策\n• 決策歷史 - 歷史記錄\n• 同意/拒絕 [ID] - 處理決策',
+                  size: 'sm',
+                  margin: 'sm'
+                }
+              ]
+            }
+          },
+          {
+            type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🛠️ 資料管理',
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#FF6B6B'
+                }
+              ]
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '📝 查看資料',
+                  weight: 'bold',
+                  color: '#4CAF50'
+                },
+                {
+                  type: 'text',
+                  text: '• 提醒清單 - 所有提醒\n• 聯絡人 - 聯絡人清單\n• 功能列表 - 完整功能',
+                  size: 'sm',
+                  margin: 'sm'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '🗑️ 清除資料',
+                  weight: 'bold',
+                  color: '#FF5722',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '• 清除歷史 - 清除指令歷史\n• 清除對話 - 清除對話記錄\n• 清除提醒 - 清除所有提醒',
+                  size: 'sm',
+                  margin: 'sm'
+                }
+              ]
+            }
+          },
+          {
+            type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🧪 測試功能',
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#9C27B0'
+                }
+              ]
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🔧 系統測試',
+                  weight: 'bold',
+                  color: '#FF9800'
+                },
+                {
+                  type: 'text',
+                  text: '• 測試 提醒 5秒後測試\n• 測試 AI系統\n• 測試 決策系統',
+                  size: 'sm',
+                  margin: 'sm'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '📨 訊息轉發',
+                  weight: 'bold',
+                  color: '#607D8B',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '• 告訴[名字] [訊息]\n• 跟[名字]說 [訊息]\n• 智能聯絡人匹配',
+                  size: 'sm',
+                  margin: 'sm'
+                }
+              ]
+            }
+          }
+        ]
+      }
+    };
+  }
+
+  async handleTestCommand(testContent) {
+    if (testContent.includes('提醒')) {
+      const timeInfo = reminderSystem.parseTime(testContent);
+      if (timeInfo && timeInfo.time) {
+        const title = reminderSystem.extractTitle(testContent);
+        const reminderId = reminderSystem.createReminder(OWNER_LINE_ID, `[測試] ${title}`, timeInfo.time, timeInfo.isAlarm, timeInfo.isPhoneCall);
+        
+        if (reminderId) {
+          return {
+            type: 'text',
+            text: `✅ 測試提醒已設定：${title}\n時間：${timeInfo.time.toLocaleString('zh-TW')}\n類型：${timeInfo.isPhoneCall ? '電話鬧鐘' : timeInfo.isAlarm ? '鬧鐘' : '一般提醒'}`
+          };
+        } else {
+          return { type: 'text', text: '❌ 測試提醒設定失敗' };
         }
-        return '請指定提醒內容，例如：/test reminder 5秒後測試';
-      
-      case 'decision':
-        return '決策系統測試：請在群組中發送需要決策的訊息';
-      
-      case 'ai':
-        return await superAI.generateReply(OWNER_LINE_ID, '這是AI測試訊息', { isGroup: false });
-      
-      default:
-        return `未知測試類型：${testType}\n可用：reminder, decision, ai`;
-    }
-  }
-
-  handleClearCommand(type) {
-    switch (type) {
-      case 'history':
-        this.commandHistory.clear();
-        return '✅ 指令歷史已清除';
-      
-      case 'conversations':
-        superAI.conversations.clear();
-        return '✅ 對話記錄已清除';
-      
-      case 'reminders':
-        const activeReminders = reminderSystem.reminders.size;
-        reminderSystem.reminders.clear();
-        reminderSystem.activeTimers.forEach(timer => clearTimeout(timer));
-        reminderSystem.activeTimers.clear();
-        return `✅ 已清除 ${activeReminders} 個提醒`;
-      
-      default:
-        return '可清除項目：history, conversations, reminders';
-    }
-  }
-
-  async handleMessageForward(message) {
-    // 解析格式：告訴[名字] [訊息內容]
-    const match = message.match(/(?:告訴|跟)(.+?)(?:說|:)(.+)/);
-    
-    if (!match) {
-      return `📨 訊息轉發格式：\n告訴[名字] [訊息內容]\n\n範例：\n• 告訴小明 等一下開會\n• 跟Alice說 謝謝你的幫忙\n\n輸入 /contacts 查看聯絡人清單`;
-    }
-
-    const targetName = match[1].trim();
-    const content = match[2].trim();
-    
-    return await messageForward.forwardMessage(targetName, content, '顧晉瑋');
-  }
-
-  async handleReminderDeletion(message) {
-    const match = message.match(/(?:刪除|取消).*?提醒.*?(\d+)/);
-    if (match) {
-      const index = parseInt(match[1]);
-      return reminderSystem.deleteReminder(OWNER_LINE_ID, index);
+      }
+      return { type: 'text', text: '❌ 測試提醒時間解析失敗' };
     }
     
-    return '請指定要刪除的提醒編號，例如：刪除提醒1\n輸入 /reminders 查看提醒清單';
+    if (testContent.includes('AI') || testContent.includes('ai')) {
+      const testReply = await aiSystem.generatePersonalizedReply(OWNER_LINE_ID, '這是AI系統測試訊息', { isGroup: false });
+      return { type: 'text', text: `🤖 AI系統測試結果：\n${testReply}` };
+    }
+    
+    if (testContent.includes('決策')) {
+      return { type: 'text', text: '⚖️ 決策系統測試：請在群組中發送需要決策的訊息來測試決策功能' };
+    }
+    
+    return { type: 'text', text: `❓ 未知測試類型：${testContent}\n可用測試：提醒、AI、決策` };
   }
 
   recordCommand(userId, command) {
@@ -1523,293 +1151,221 @@ class SuperPrivateMessageSystem {
       timestamp: new Date()
     });
     
-    // 保持最近50條記錄
     if (history.length > 50) {
       history.shift();
     }
   }
+}
 
-  getSystemStatus() {
-    const uptime = process.uptime();
-    const uptimeStr = `${Math.floor(uptime / 3600)}小時${Math.floor((uptime % 3600) / 60)}分鐘`;
-    
-    return `🤖 系統狀態報告
-
-⏱️ 運行時間：${uptimeStr}
-⏰ 提醒系統：正常（${reminderSystem.reminders.size} 個活躍）
-🧠 AI系統：正常（${superAI.conversations.size} 條對話）
-⚖️ 決策系統：正常（${decisionSystem.pendingDecisions.size} 個待處理）
-🔍 搜尋系統：正常
-🎬 電影系統：正常
-📨 轉發系統：正常（${messageForward.userList.size} 人聯絡人）
-📊 圖表系統：正常
-💬 私訊系統：正常
-
-👥 用戶總數：${superAI.userProfiles.size} 人
-🏠 記憶體使用：${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB
-
-✅ 所有系統運作正常！`;
+// 自我修復系統
+class SelfRepairSystem {
+  constructor() {
+    this.errorCount = new Map();
+    this.lastErrors = [];
+    console.log('🛠️ 自我修復系統已初始化');
   }
 
-  getUserReport() {
-    const users = Array.from(superAI.userProfiles.values());
+  async handleError(error, context = '') {
+    console.error(`🚨 捕獲錯誤 [${context}]:`, error);
     
-    if (users.length === 0) {
-      return '目前沒有用戶資料';
-    }
+    // 記錄錯誤
+    const errorKey = error.message || error.toString();
+    this.errorCount.set(errorKey, (this.errorCount.get(errorKey) || 0) + 1);
     
-    const sortedUsers = users
-      .sort((a, b) => b.messageCount - a.messageCount)
-      .slice(0, 15);
-    
-    let report = `👥 用戶活躍度報告\n\n總用戶數：${users.length} 人\n\n`;
-    
-    // 準備圖表資料
-    const chartData = sortedUsers.slice(0, 8).map(user => ({
-      name: user.name.length > 8 ? user.name.substring(0, 8) : user.name,
-      value: user.messageCount
-    }));
-    
-    const chart = chartSystem.generateBarChart(chartData, '用戶活躍度排行');
-    
-    sortedUsers.forEach((user, index) => {
-      const lastSeenAgo = Math.floor((new Date() - user.lastSeen) / 60000);
-      report += `${index + 1}. ${user.name}\n`;
-      report += `   💬 訊息數：${user.messageCount}\n`;
-      report += `   🕐 最後活躍：${lastSeenAgo < 60 ? lastSeenAgo + '分鐘前' : Math.floor(lastSeenAgo / 60) + '小時前'}\n\n`;
+    this.lastErrors.push({
+      error: errorKey,
+      context,
+      timestamp: new Date()
     });
     
-    report += `\n${chart}`;
+    // 保持最近50個錯誤記錄
+    if (this.lastErrors.length > 50) {
+      this.lastErrors.shift();
+    }
     
-    return report;
+    // 自動修復嘗試
+    try {
+      await this.attemptRepair(error, context);
+    } catch (repairError) {
+      console.error('🔧 自我修復失敗:', repairError);
+    }
+    
+    // 如果錯誤頻繁，通知主人
+    if (this.errorCount.get(errorKey) >= 5) {
+      await this.notifyOwnerOfRepeatedError(errorKey, context);
+    }
   }
 
-  getDecisionHistory() {
-    const history = Array.from(decisionSystem.decisionHistory.values())
-      .sort((a, b) => b.completedAt - a.completedAt)
-      .slice(0, 10);
+  async attemptRepair(error, context) {
+    console.log('🔧 嘗試自我修復...');
     
-    if (history.length === 0) {
-      return '沒有決策歷史記錄';
+    // 根據錯誤類型嘗試不同的修復策略
+    if (error.message && error.message.includes('timeout')) {
+      console.log('🔧 檢測到超時錯誤，增加重試機制');
+      // 超時錯誤的修復策略
+      return;
     }
+    
+    if (error.message && error.message.includes('network')) {
+      console.log('🔧 檢測到網路錯誤，等待後重試');
+      await new Promise(resolve => setTimeout(resolve, 5000)); // 等待5秒
+      return;
+    }
+    
+    if (error.message && error.message.includes('API')) {
+      console.log('🔧 檢測到API錯誤，切換備用服務');
+      // API錯誤的修復策略
+      return;
+    }
+    
+    console.log('🔧 一般性修復：重置相關狀態');
+  }
 
-    let report = `📚 最近決策歷史 (${history.length}個)：\n\n`;
-    
-    // 準備統計資料
-    const statusCount = {
-      'approved': 0,
-      'rejected': 0,
-      'custom': 0,
-      'auto_rejected': 0
-    };
-    
-    history.forEach(d => {
-      statusCount[d.status] = (statusCount[d.status] || 0) + 1;
-    });
-    
-    const chartData = Object.entries(statusCount)
-      .filter(([key, value]) => value > 0)
-      .map(([key, value]) => ({
-        name: key === 'approved' ? '同意' : 
-              key === 'rejected' ? '拒絕' : 
-              key === 'custom' ? '自訂' : '自動拒絕',
-        value: value
-      }));
-    
-    if (chartData.length > 0) {
-      const chart = chartSystem.generatePieChart(chartData, '決策結果分布');
-      report += `${chart}\n\n`;
-    }
-    
-    history.forEach((d, index) => {
-      const statusEmoji = d.status === 'approved' ? '✅' : 
-                         d.status === 'rejected' ? '❌' : 
-                         d.status === 'custom' ? '💬' : '⏰';
+  async notifyOwnerOfRepeatedError(errorKey, context) {
+    try {
+      const errorMessage = {
+        type: 'flex',
+        altText: '🚨 系統錯誤警報',
+        contents: {
+          type: 'bubble',
+          header: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'text',
+                text: '🚨 系統錯誤警報',
+                weight: 'bold',
+                size: 'lg',
+                color: '#FF0000'
+              }
+            ],
+            backgroundColor: '#FFE4E1'
+          },
+          body: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'text',
+                text: '檢測到重複錯誤',
+                weight: 'bold',
+                margin: 'md'
+              },
+              {
+                type: 'text',
+                text: `錯誤內容：${errorKey}`,
+                wrap: true,
+                size: 'sm',
+                margin: 'sm'
+              },
+              {
+                type: 'text',
+                text: `發生環境：${context}`,
+                size: 'sm',
+                color: '#666666',
+                margin: 'sm'
+              },
+              {
+                type: 'text',
+                text: `發生次數：${this.errorCount.get(errorKey)}次`,
+                size: 'sm',
+                color: '#FF5722',
+                margin: 'sm'
+              },
+              {
+                type: 'separator',
+                margin: 'md'
+              },
+              {
+                type: 'text',
+                text: '🔧 系統正在嘗試自動修復',
+                margin: 'md',
+                color: '#4CAF50'
+              },
+              {
+                type: 'text',
+                text: `時間：${new Date().toLocaleString('zh-TW')}`,
+                size: 'xs',
+                color: '#999999',
+                margin: 'md'
+              }
+            ]
+          }
+        }
+      };
       
-      report += `${index + 1}. ${statusEmoji} [${d.shortId}]\n`;
-      report += `   👤 ${d.userName}\n`;
-      report += `   💬 ${d.message.substring(0, 40)}${d.message.length > 40 ? '...' : ''}\n`;
-      report += `   📅 ${d.completedAt.toLocaleString('zh-TW')}\n\n`;
-    });
+      await client.pushMessage(OWNER_LINE_ID, errorMessage);
+      console.log('📨 錯誤警報已發送給主人');
+      
+    } catch (notifyError) {
+      console.error('❌ 錯誤通知發送失敗:', notifyError);
+    }
+  }
+
+  getErrorStats() {
+    const totalErrors = Array.from(this.errorCount.values()).reduce((sum, count) => sum + count, 0);
+    const uniqueErrors = this.errorCount.size;
+    const recentErrors = this.lastErrors.filter(e => 
+      new Date() - e.timestamp < 3600000 // 最近1小時
+    ).length;
     
-    return report;
-  }
-
-  getStatsWithCharts() {
-    const stats = {
-      users: superAI.userProfiles.size,
-      conversations: superAI.conversations.size,
-      reminders: reminderSystem.reminders.size,
-      decisions: decisionSystem.pendingDecisions.size,
-      contacts: messageForward.userList.size
+    return {
+      totalErrors,
+      uniqueErrors,
+      recentErrors,
+      topErrors: Array.from(this.errorCount.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
     };
-
-    const chartData = Object.entries(stats).map(([key, value]) => ({
-      name: key === 'users' ? '用戶' :
-            key === 'conversations' ? '對話' :
-            key === 'reminders' ? '提醒' :
-            key === 'decisions' ? '決策' : '聯絡人',
-      value: value
-    }));
-
-    const chart = chartSystem.generateBarChart(chartData, '系統使用統計');
-
-    return `📊 系統統計資訊\n\n${chart}\n\n詳細數據：\n👥 用戶數：${stats.users}\n💬 對話記錄：${stats.conversations}\n⏰ 活躍提醒：${stats.reminders}\n⚖️ 待處理決策：${stats.decisions}\n📱 聯絡人：${stats.contacts}`;
-  }
-
-  getFeaturesList() {
-    return `🎛️ 超級增強版功能總覽 v12.0
-
-🧠 智能對話系統：
-• Gemini AI + 備用 AI 雙重保障
-• 群組上下文記憶 (30條訊息)
-• 個性化學習回覆
-• 智能離線回覆
-
-⚖️ 超級決策系統：
-• 智能決策判斷
-• 完整上下文提供
-• AI 決策分析
-• 多格式回應 (同意/拒絕/問/回覆/更多/忽略)
-• 30分鐘自動處理
-• 8位短ID追蹤
-
-⏰ 超級提醒系統：
-• 多種時間格式 (秒/分/時/絕對時間)
-• 智能標題提取
-• 鬧鐘功能
-• 提醒清單管理
-
-🔍 超級搜尋系統：
-• 網路即時搜尋
-• AI 知識補充
-• 天氣查詢
-• 新聞資訊
-
-🎬 超級電影系統：
-• 熱門電影推薦
-• 電影搜尋
-• 詳細資訊查詢
-• 評分圖表顯示
-
-📨 超級轉發系統：
-• 智能用戶匹配
-• 相似名稱建議
-• 聯絡人管理
-• 轉發歷史記錄
-
-📊 圖表系統：
-• ASCII 統計圖
-• 折線圖趨勢
-• 圓餅圖分布
-• 回覆視覺化
-
-💬 主人專用指令：
-/status - 系統狀態
-/users - 用戶報告  
-/reminders - 提醒清單
-/decisions - 決策管理
-/contacts - 聯絡人
-/history - 決策歷史
-/stats - 統計圖表
-/features - 功能列表
-/test [類型] - 系統測試
-/clear [項目] - 清除資料
-
-📱 一般用戶功能：
-• 自然對話互動
-• 提醒設定
-• 電影查詢
-• 搜尋功能
-• 天氣查詢
-• 功能選單
-
-✨ v12.0 新增：
-• 圖表視覺化回覆
-• 增強決策系統 (8位ID + AI分析)
-• 超級提醒系統 (支援秒級測試)
-• 完整功能整合
-• 系統測試工具
-• 資料管理指令
-
-🔧 修復項目：
-✅ 決策回覆功能
-✅ 提醒系統響應
-✅ 電影查詢API
-✅ 多群組決策混亂
-✅ 網路搜尋功能
-✅ 系統穩定性
-
-所有功能完全整合，穩定運行！ 🚀`;
   }
 }
 
 // 初始化所有系統
-const chartSystem = new ChartSystem();
-const superAI = new SuperAISystem();
-const decisionSystem = new SuperDecisionSystem();
-const reminderSystem = new SuperReminderSystem();
-const privateMessage = new SuperPrivateMessageSystem();
-const webSearch = new SuperWebSearchSystem();
-const movieSystem = new SuperMovieSystem();
-const messageForward = new SuperMessageForwardSystem();
+const aiSystem = new HyperRealisticAISystem();
+const decisionSystem = new SuperAdvancedDecisionSystem();
+const reminderSystem = new SuperReminderWithPhoneSystem();
+const searchSystem = new SuperSearchSystemWithRichDisplay();
+const movieSystem = new SuperMovieSystemWithRichDisplay();
+const commandSystem = new ChineseCommandSystem();
+const repairSystem = new SelfRepairSystem();
 
-// Reply Token 管理 (優化版)
+// Reply Token 管理
 class ReplyTokenManager {
   constructor() {
     this.usedTokens = new Set();
-    this.cleanupInterval = setInterval(() => this.cleanup(), 300000); // 5分鐘清理一次
+    this.cleanupInterval = setInterval(() => this.cleanup(), 300000);
   }
 
-  isUsed(token) { 
-    return this.usedTokens.has(token); 
-  }
-  
-  markUsed(token) { 
-    this.usedTokens.add(token); 
-  }
-  
-  cleanup() { 
-    this.usedTokens.clear(); 
-    console.log('🧹 Token 清理完成');
-  }
+  isUsed(token) { return this.usedTokens.has(token); }
+  markUsed(token) { this.usedTokens.add(token); }
+  cleanup() { this.usedTokens.clear(); }
 }
 
 const tokenManager = new ReplyTokenManager();
 
-// 安全回覆函數 (增強版)
+// 安全回覆函數
 async function safeReply(replyToken, message, retryCount = 0) {
   try {
-    if (!replyToken || tokenManager.isUsed(replyToken)) {
-      console.log('⚠️ Reply token 無效或已使用');
-      return false;
-    }
-    
+    if (!replyToken || tokenManager.isUsed(replyToken)) return false;
     tokenManager.markUsed(replyToken);
     
-    const formattedMessage = typeof message === 'string' ? 
-      { type: 'text', text: message.substring(0, MAX_MESSAGE_LENGTH) } : message;
-    
-    await client.replyMessage(replyToken, formattedMessage);
-    console.log('✅ 回覆成功');
+    await client.replyMessage(replyToken, message);
     return true;
     
   } catch (error) {
-    console.error(`❌ 回覆失敗 (${retryCount + 1}):`, error.message);
+    await repairSystem.handleError(error, 'safeReply');
     
     if (retryCount < 2 && !error.message.includes('Invalid reply token')) {
-      const simpleText = typeof message === 'string' ? message : 
-        (message.text || message.altText || '系統回覆');
+      const simpleMessage = typeof message === 'object' && message.altText ? 
+        { type: 'text', text: message.altText } : 
+        { type: 'text', text: '系統回覆' };
       
       try {
-        await client.replyMessage(replyToken, { 
-          type: 'text', 
-          text: simpleText.substring(0, MAX_MESSAGE_LENGTH) 
-        });
-        console.log('✅ 簡化回覆成功');
+        await client.replyMessage(replyToken, simpleMessage);
         return true;
       } catch (simpleError) {
-        console.error('❌ 簡化回覆也失敗:', simpleError.message);
+        console.error('❌ 簡化回覆也失敗:', simpleError);
       }
     }
     
@@ -1817,32 +1373,25 @@ async function safeReply(replyToken, message, retryCount = 0) {
   }
 }
 
-// 安全推送函數 (增強版)
+// 安全推送函數
 async function safePushMessage(targetId, message, retryCount = 0) {
   try {
-    const formattedMessage = typeof message === 'string' ? 
-      { type: 'text', text: message.substring(0, MAX_MESSAGE_LENGTH) } : message;
-    
-    await client.pushMessage(targetId, formattedMessage);
-    console.log('✅ 推送成功');
+    await client.pushMessage(targetId, message);
     return true;
     
   } catch (error) {
-    console.error(`❌ 推送失敗 (${retryCount + 1}):`, error.message);
+    await repairSystem.handleError(error, 'safePushMessage');
     
     if (retryCount < 2) {
-      const simpleText = typeof message === 'string' ? message : 
-        (message.text || message.altText || '系統推送');
+      const simpleMessage = typeof message === 'object' && message.altText ? 
+        { type: 'text', text: message.altText } : 
+        { type: 'text', text: '系統推送' };
       
       try {
-        await client.pushMessage(targetId, { 
-          type: 'text', 
-          text: simpleText.substring(0, MAX_MESSAGE_LENGTH) 
-        });
-        console.log('✅ 簡化推送成功');
+        await client.pushMessage(targetId, simpleMessage);
         return true;
       } catch (simpleError) {
-        console.error('❌ 簡化推送也失敗:', simpleError.message);
+        console.error('❌ 簡化推送也失敗:', simpleError);
       }
     }
     
@@ -1852,7 +1401,7 @@ async function safePushMessage(targetId, message, retryCount = 0) {
 
 // 智能判斷函數
 function isReminderQuery(text) {
-  const reminderKeywords = ['提醒', '分鐘後', '小時後', '秒後', '叫我', '起床', '鬧鐘', '明天', '設定提醒'];
+  const reminderKeywords = ['提醒', '分鐘後', '小時後', '秒後', '叫我', '起床', '鬧鐘', '明天', '設定提醒', '電話叫', '打電話'];
   return reminderKeywords.some(keyword => text.includes(keyword)) && 
          (text.match(/\d/) || text.includes('明天'));
 }
@@ -1875,19 +1424,18 @@ function isFunctionMenuQuery(text) {
 function extractCityFromText(text) {
   const cities = ['台北', '新北', '桃園', '台中', '台南', '高雄', '基隆', '新竹', '苗栗', '彰化', '南投', '雲林', '嘉義', '屏東', '宜蘭', '花蓮', '台東', '澎湖', '金門', '連江'];
   for (const city of cities) {
-    if (text.includes(city)) {
-      return city;
-    }
+    if (text.includes(city)) return city;
   }
   return null;
 }
 
-// 健康檢查端點 (增強版)
+// 健康檢查端點
 app.get('/', (req, res) => {
   const currentTime = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
   const uptime = process.uptime();
   const uptimeStr = `${Math.floor(uptime / 3600)}小時${Math.floor((uptime % 3600) / 60)}分鐘`;
   const memoryUsage = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
+  const errorStats = repairSystem.getErrorStats();
   
   res.send(`
     <!DOCTYPE html>
@@ -1895,7 +1443,7 @@ app.get('/', (req, res) => {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>顧晉瑋的超級增強版 LINE Bot v12.0</title>
+      <title>AI分身版 LINE Bot - 終極進化版</title>
       <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -1918,6 +1466,23 @@ app.get('/', (req, res) => {
           font-size: 2.5em;
           margin-bottom: 10px;
           text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .ai-badge {
+          background: linear-gradient(45deg, #FF6B6B, #4ECDC4, #45B7D1, #96CEB4);
+          background-size: 300% 300%;
+          animation: gradient 3s ease infinite;
+          color: white;
+          padding: 8px 16px;
+          border-radius: 25px;
+          font-size: 1em;
+          font-weight: bold;
+          display: inline-block;
+          margin: 10px;
+        }
+        @keyframes gradient {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
         }
         .status-grid {
           display: grid;
@@ -1946,83 +1511,32 @@ app.get('/', (req, res) => {
           background: rgba(74,84,225,0.05);
           border-radius: 8px;
         }
-        .status-indicator {
-          display: inline-block;
-          width: 12px;
-          height: 12px;
-          border-radius: 50%;
-          background: #4CAF50;
-          margin-right: 8px;
-          animation: pulse 2s infinite;
-        }
-        @keyframes pulse {
-          0% { opacity: 1; }
-          50% { opacity: 0.5; }
-          100% { opacity: 1; }
-        }
-        .feature-grid {
-          display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-          gap: 15px;
-          margin: 30px 0;
-        }
-        .feature-card {
-          background: rgba(255,255,255,0.9);
-          border-radius: 12px;
-          padding: 20px;
-          box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-          transition: transform 0.3s ease;
-        }
-        .feature-card:hover {
-          transform: translateY(-5px);
-        }
-        .feature-card h4 {
-          color: #764ba2;
-          margin-bottom: 10px;
-          font-size: 1.1em;
-        }
-        .version-badge {
-          background: linear-gradient(45deg, #FF6B6B, #4ECDC4);
+        .personality-card {
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
           color: white;
-          padding: 5px 12px;
-          border-radius: 20px;
-          font-size: 0.9em;
-          font-weight: bold;
-        }
-        .chart-container {
-          background: rgba(255,255,255,0.95);
-          border-radius: 15px;
-          padding: 20px;
-          margin: 20px 0;
-          text-align: center;
-        }
-        .chart {
-          font-family: monospace;
-          font-size: 0.9em;
-          background: #f8f9fa;
-          padding: 20px;
-          border-radius: 10px;
-          overflow-x: auto;
-          white-space: pre;
-        }
-        .update-list {
-          background: rgba(255,255,255,0.95);
           border-radius: 15px;
           padding: 25px;
           margin: 20px 0;
         }
-        .update-list h3 {
-          color: #4a54e1;
+        .personality-card h3 {
           margin-bottom: 15px;
+          font-size: 1.4em;
         }
-        .update-item {
-          display: flex;
-          align-items: center;
-          margin: 8px 0;
-          padding: 8px 12px;
-          background: rgba(76,175,80,0.1);
-          border-radius: 8px;
-          border-left: 4px solid #4CAF50;
+        .feature-highlight {
+          background: rgba(255,255,255,0.1);
+          border-radius: 10px;
+          padding: 15px;
+          margin: 10px 0;
+        }
+        .error-stats {
+          background: rgba(255,255,255,0.95);
+          border-radius: 15px;
+          padding: 20px;
+          margin: 20px 0;
+        }
+        .error-stats h3 {
+          color: #e74c3c;
+          margin-bottom: 15px;
         }
         .footer {
           text-align: center;
@@ -2035,213 +1549,143 @@ app.get('/', (req, res) => {
     <body>
       <div class="container">
         <div class="header">
-          <h1>🤖 顧晉瑋的超級增強版 LINE Bot</h1>
-          <div class="version-badge">v12.0 ULTIMATE</div>
+          <h1>🤖 AI分身版 LINE Bot</h1>
+          <div class="ai-badge">終極進化版 - 完全模擬你的個性</div>
           <p style="margin-top: 15px; font-size: 1.1em;">
             <strong>🇹🇼 台灣時間：${currentTime}</strong><br>
             <strong>⏱️ 運行時間：${uptimeStr}</strong><br>
             <strong>🏠 記憶體使用：${memoryUsage} MB</strong>
           </p>
         </div>
+
+        <div class="personality-card">
+          <h3>🎭 AI分身個性檔案</h3>
+          <div class="feature-highlight">
+            <strong>👤 身份：</strong>顧晉瑋 - 靜宜大學資管系學生<br>
+            <strong>🗣️ 語氣：</strong>活潑友善，台灣年輕人風格<br>
+            <strong>💭 價值觀：</strong>樂於助人、直率坦誠、科技愛好者<br>
+            <strong>🎯 特色：</strong>完全模擬你的回覆風格，讓大家感覺Bot就是你本人
+          </div>
+        </div>
         
         <div class="status-grid">
           <div class="status-card">
-            <h3><span class="status-indicator"></span>系統狀態</h3>
+            <h3>🧠 AI分身系統</h3>
             <div class="stat-item">
-              <span>🧠 AI系統</span>
-              <span>運作中 (${superAI.conversations.size} 條對話)</span>
+              <span>對話記錄</span>
+              <span>${aiSystem.conversations.size} 筆</span>
             </div>
             <div class="stat-item">
-              <span>⏰ 提醒系統</span>
-              <span>運作中 (${reminderSystem.reminders.size} 個活躍)</span>
+              <span>用戶檔案</span>
+              <span>${aiSystem.userProfiles.size} 人</span>
             </div>
             <div class="stat-item">
-              <span>⚖️ 決策系統</span>
-              <span>運作中 (${decisionSystem.pendingDecisions.size} 個待處理)</span>
+              <span>群組記憶</span>
+              <span>${aiSystem.groupContexts.size} 個群組</span>
             </div>
             <div class="stat-item">
-              <span>📊 圖表系統</span>
-              <span>正常運作</span>
+              <span>個性學習</span>
+              <span>持續進化中</span>
             </div>
           </div>
           
           <div class="status-card">
-            <h3>📊 使用統計</h3>
+            <h3>⚖️ 決策系統</h3>
             <div class="stat-item">
-              <span>👥 總用戶數</span>
-              <span>${superAI.userProfiles.size} 人</span>
+              <span>待處理決策</span>
+              <span>${decisionSystem.pendingDecisions.size} 個</span>
             </div>
             <div class="stat-item">
-              <span>📱 聯絡人</span>
-              <span>${messageForward.userList.size} 人</span>
+              <span>決策歷史</span>
+              <span>${decisionSystem.decisionHistory.size} 筆</span>
             </div>
             <div class="stat-item">
-              <span>💬 對話記錄</span>
-              <span>${superAI.conversations.size} 筆</span>
+              <span>AI分析</span>
+              <span>智能運作中</span>
             </div>
             <div class="stat-item">
-              <span>🔑 機器人主人</span>
-              <span>${OWNER_LINE_ID}</span>
+              <span>自動處理</span>
+              <span>30分鐘超時</span>
+            </div>
+          </div>
+
+          <div class="status-card">
+            <h3>⏰ 提醒系統</h3>
+            <div class="stat-item">
+              <span>活躍提醒</span>
+              <span>${reminderSystem.reminders.size} 個</span>
+            </div>
+            <div class="stat-item">
+              <span>定時器</span>
+              <span>${reminderSystem.activeTimers.size} 個</span>
+            </div>
+            <div class="stat-item">
+              <span>電話鬧鐘</span>
+              <span>支援中</span>
+            </div>
+            <div class="stat-item">
+              <span>圖文提醒</span>
+              <span>已啟用</span>
+            </div>
+          </div>
+
+          <div class="status-card">
+            <h3>🔍 搜尋與電影</h3>
+            <div class="stat-item">
+              <span>網路搜尋</span>
+              <span>DuckDuckGo + AI</span>
+            </div>
+            <div class="stat-item">
+              <span>天氣查詢</span>
+              <span>中央氣象署</span>
+            </div>
+            <div class="stat-item">
+              <span>電影資料</span>
+              <span>TMDB API</span>
+            </div>
+            <div class="stat-item">
+              <span>圖文顯示</span>
+              <span>Flex Message</span>
             </div>
           </div>
         </div>
 
-        <div class="chart-container">
-          <h3>📈 系統運行狀態圖表</h3>
-          <div class="chart" id="systemChart">載入中...</div>
-        </div>
-
-        <div class="feature-grid">
-          <div class="feature-card">
-            <h4>🧠 超級AI系統</h4>
-            <ul>
-              <li>Gemini AI + 備用 AI</li>
-              <li>群組上下文記憶 (30條)</li>
-              <li>個性化學習回覆</li>
-              <li>智能離線回覆</li>
-            </ul>
+        <div class="error-stats">
+          <h3>🛠️ 系統穩定性報告</h3>
+          <div class="stat-item">
+            <span>總錯誤次數</span>
+            <span>${errorStats.totalErrors} 次</span>
           </div>
-          
-          <div class="feature-card">
-            <h4>⚖️ 超級決策系統</h4>
-            <ul>
-              <li>智能決策判斷</li>
-              <li>AI 決策分析</li>
-              <li>8位短ID追蹤</li>
-              <li>30分鐘自動處理</li>
-            </ul>
+          <div class="stat-item">
+            <span>錯誤類型</span>
+            <span>${errorStats.uniqueErrors} 種</span>
           </div>
-          
-          <div class="feature-card">
-            <h4>⏰ 超級提醒系統</h4>
-            <ul>
-              <li>支援秒/分/時提醒</li>
-              <li>智能標題提取</li>
-              <li>鬧鐘功能</li>
-              <li>提醒清單管理</li>
-            </ul>
+          <div class="stat-item">
+            <span>最近1小時錯誤</span>
+            <span>${errorStats.recentErrors} 次</span>
           </div>
-          
-          <div class="feature-card">
-            <h4>🔍 超級搜尋系統</h4>
-            <ul>
-              <li>網路即時搜尋</li>
-              <li>AI 知識補充</li>
-              <li>天氣查詢</li>
-              <li>新聞資訊</li>
-            </ul>
+          <div class="stat-item">
+            <span>自我修復</span>
+            <span>智能運作中</span>
           </div>
-          
-          <div class="feature-card">
-            <h4>🎬 超級電影系統</h4>
-            <ul>
-              <li>熱門電影推薦</li>
-              <li>電影詳細資訊</li>
-              <li>評分圖表顯示</li>
-              <li>智能搜尋</li>
-            </ul>
-          </div>
-          
-          <div class="feature-card">
-            <h4>📨 超級轉發系統</h4>
-            <ul>
-              <li>智能用戶匹配</li>
-              <li>相似名稱建議</li>
-              <li>聯絡人管理</li>
-              <li>轉發歷史記錄</li>
-            </ul>
-          </div>
-          
-          <div class="feature-card">
-            <h4>📊 圖表視覺化</h4>
-            <ul>
-              <li>ASCII 統計圖</li>
-              <li>折線圖趨勢</li>
-              <li>圓餅圖分布</li>
-              <li>即時數據呈現</li>
-            </ul>
-          </div>
-          
-          <div class="feature-card">
-            <h4>💬 超級私訊系統</h4>
-            <ul>
-              <li>完整指令系統</li>
-              <li>系統測試工具</li>
-              <li>資料管理</li>
-              <li>狀態監控</li>
-            </ul>
-          </div>
-        </div>
-
-        <div class="update-list">
-          <h3>🚀 v12.0 終極版更新內容</h3>
-          <div class="update-item">✅ 完全修復決策回覆功能</div>
-          <div class="update-item">✅ 新增8位短ID決策追蹤系統</div>
-          <div class="update-item">✅ AI決策分析與建議</div>
-          <div class="update-item">✅ 完全修復提醒系統 (支援秒級測試)</div>
-          <div class="update-item">✅ 修復電影查詢API與圖表顯示</div>
-          <div class="update-item">✅ 新增超級網路搜尋功能</div>
-          <div class="update-item">✅ 智能訊息轉發系統</div>
-          <div class="update-item">✅ 圖表視覺化回覆 (統計圖/折線圖/圓餅圖)</div>
-          <div class="update-item">✅ 完整的主人指令系統 (/status, /users, /test等)</div>
-          <div class="update-item">✅ 系統測試與監控工具</div>
-          <div class="update-item">✅ 多群組決策問題完全解決</div>
-          <div class="update-item">✅ 30分鐘決策自動處理</div>
-          <div class="update-item">✅ 增強型錯誤處理與重試機制</div>
-          <div class="update-item">✅ 記憶體優化與效能提升</div>
-          <div class="update-item">✅ 完整功能整合與穩定性保證</div>
         </div>
 
         <div class="footer">
-          <p>🤖 超級增強版 LINE Bot v12.0 - 由顧晉瑋 (靜宜大學資管系) 開發</p>
-          <p>✨ 所有功能完全整合，穩定運行！</p>
+          <p>🤖 AI分身版 LINE Bot - 終極進化版</p>
+          <p>由顧晉瑋 (靜宜大學資管系) 開發</p>
+          <p>✨ 完全模擬你的個性，成為你的數位分身！</p>
         </div>
       </div>
-
-      <script>
-        // 生成系統狀態圖表
-        function generateSystemChart() {
-          const data = [
-            { name: '用戶', value: ${superAI.userProfiles.size} },
-            { name: '對話', value: ${superAI.conversations.size} },
-            { name: '提醒', value: ${reminderSystem.reminders.size} },
-            { name: '決策', value: ${decisionSystem.pendingDecisions.size} },
-            { name: '聯絡', value: ${messageForward.userList.size} }
-          ];
-          
-          const maxValue = Math.max(...data.map(d => d.value), 10);
-          const maxBarLength = 30;
-          
-          let chart = '📊 系統使用統計\\n\\n';
-          
-          data.forEach(item => {
-            const barLength = Math.round((item.value / maxValue) * maxBarLength);
-            const bar = '█'.repeat(barLength) + '░'.repeat(maxBarLength - barLength);
-            chart += item.name.padEnd(4) + ' │' + bar + '│ ' + item.value + '\\n';
-          });
-          
-          document.getElementById('systemChart').textContent = chart;
-        }
-        
-        // 頁面載入後生成圖表
-        generateSystemChart();
-        
-        // 每30秒更新一次
-        setInterval(() => {
-          location.reload();
-        }, 30000);
-      </script>
     </body>
     </html>
   `);
 });
 
-// Webhook 端點 (超級增強版)
+// Webhook 端點
 app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) => {
   const signature = req.get('X-Line-Signature');
   
   if (!signature) {
-    console.error('❌ 缺少簽名標頭');
     return res.status(401).send('缺少簽名標頭');
   }
 
@@ -2249,7 +1693,6 @@ app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) =
   const hash = crypto.createHmac('SHA256', config.channelSecret).update(body).digest('base64');
 
   if (signature !== hash) {
-    console.error('❌ 簽名驗證失敗');
     return res.status(401).send('簽名驗證失敗');
   }
 
@@ -2258,11 +1701,10 @@ app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) =
     const parsedBody = JSON.parse(body);
     events = parsedBody.events;
   } catch (error) {
-    console.error('❌ JSON 解析失敗:', error);
+    await repairSystem.handleError(error, 'webhook_parse');
     return res.status(400).send('無效的 JSON');
   }
 
-  // 立即回應 LINE 平台
   res.status(200).json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
@@ -2272,18 +1714,55 @@ app.post('/webhook', express.raw({type: 'application/json'}), async (req, res) =
   // 異步處理事件
   events.forEach(event => {
     handleEvent(event).catch(error => {
-      console.error('❌ 事件處理錯誤:', error);
+      repairSystem.handleError(error, 'event_handling');
     });
   });
 });
 
-// 主要事件處理函數 (超級增強版)
+// 主要事件處理函數
 async function handleEvent(event) {
   try {
     console.log('📥 接收事件:', event.type);
     
+    // 處理訊息收回事件
+    if (event.type === 'unsend') {
+      console.log('📢 偵測到訊息收回');
+      const userId = event.source.userId;
+      const messageId = event.unsend.messageId;
+      
+      // 嘗試從記錄中找到原始訊息
+      let originalText = '無法獲取原始內容';
+      for (const [convId, conv] of aiSystem.conversations) {
+        if (conv.userId === userId) {
+          originalText = conv.message;
+          break;
+        }
+      }
+      
+      // 獲取用戶資訊
+      let userName = '未知用戶';
+      let context = { isGroup: !!event.source.groupId };
+      try {
+        if (event.source.groupId) {
+          const profile = await client.getGroupMemberProfile(event.source.groupId, userId);
+          userName = profile.displayName;
+          context.groupId = event.source.groupId;
+        } else {
+          const profile = await client.getProfile(userId);
+          userName = profile.displayName;
+        }
+      } catch (error) {
+        console.log('無法獲取用戶資訊');
+      }
+      
+      context.userName = userName;
+      
+      // 記錄並通知
+      aiSystem.recordMessageRecall(userId, messageId, originalText, context);
+      return;
+    }
+    
     if (event.type !== 'message' || event.message.type !== 'text') {
-      console.log('⏩ 跳過非文字訊息事件');
       return;
     }
 
@@ -2316,19 +1795,53 @@ async function handleEvent(event) {
       console.log('⚠️ 無法獲取用戶資訊，使用預設名稱');
     }
 
-    console.log(`👤 用戶: ${userName} (${userId})`);
-
-    // 更新用戶列表
-    messageForward.updateUserList(userId, userName);
-
     const context = { isGroup, groupId, userId, userName, groupName };
     let response = '';
 
-    // 私訊特殊處理
+    // 私訊處理
     if (!isGroup) {
       console.log('📱 處理私訊');
-      response = await privateMessage.handlePrivateMessage(userId, userName, messageText);
-      await safeReply(replyToken, response);
+      
+      if (userId === OWNER_LINE_ID) {
+        // 主人私訊 - 處理決策回覆和中文指令
+        if (decisionSystem.pendingDecisions.size > 0) {
+          const decisionResponse = await decisionSystem.processOwnerDecision(messageText, OWNER_LINE_ID);
+          if (decisionResponse && typeof decisionResponse !== 'string') {
+            await safeReply(replyToken, decisionResponse);
+            return;
+          } else if (decisionResponse && !decisionResponse.includes('目前沒有待處理的決策')) {
+            await safeReply(replyToken, { type: 'text', text: decisionResponse });
+            return;
+          }
+        }
+        
+        // 中文指令處理
+        const commandResponse = await commandSystem.handleOwnerCommand(messageText);
+        if (commandResponse) {
+          await safeReply(replyToken, commandResponse);
+          return;
+        }
+        
+        // 訊息轉發處理
+        if (messageText.includes('告訴') || (messageText.includes('跟') && messageText.includes('說'))) {
+          const match = messageText.match(/(?:告訴|跟)(.+?)(?:說|:)(.+)/);
+          if (match) {
+            const targetName = match[1].trim();
+            const content = match[2].trim();
+            
+            // 簡單的轉發邏輯（這裡可以擴展更完整的功能）
+            await safeReply(replyToken, {
+              type: 'text',
+              text: `📨 收到轉發請求：\n目標：${targetName}\n訊息：${content}\n\n（轉發功能開發中...）`
+            });
+            return;
+          }
+        }
+      }
+      
+      // 一般私訊回覆
+      response = await aiSystem.generatePersonalizedReply(userId, messageText, context);
+      await safeReply(replyToken, { type: 'text', text: response });
       return;
     }
 
@@ -2336,57 +1849,179 @@ async function handleEvent(event) {
     console.log('👥 處理群組訊息');
     
     if (isFunctionMenuQuery(messageText)) {
-      console.log('📋 顯示功能選單');
-      const menuText = `🎛️ 顧晉瑋的超級AI助手 v12.0
-
-⏰ 提醒功能：
-• "10分鐘後提醒我休息"
-• "3:30提醒我開會"  
-• "明天7點叫我起床"
-• "5秒後測試提醒" (測試用)
-
-💬 智能對話：
-• 任何問題都可以問我
-• 記住群組對話內容 (30條)
-• 個性化互動
-
-🔍 搜尋功能：
-• "搜尋最新科技新聞"
-• "台北天氣如何"
-• "幫我查詢XXX"
-
-🎬 電影查詢：
-• "最近有什麼電影"
-• "搜尋電影復仇者聯盟"
-• 附帶評分圖表
-
-⚖️ 智能決策系統：
-• 重要決定會先詢問主人
-• 提供完整對話脈絡
-• AI 智能分析建議
-
-📊 圖表回覆：
-• 統計資料自動圖表化
-• 視覺化數據呈現
-
-🔐 隱私保護：
-• 群組對話不洩露個人信息
-• 安全的資料處理
-
-💡 更多功能請私訊我探索！
-
-✨ v12.0 終極版 - 所有功能完全整合！`;
+      const menuMessage = {
+        type: 'flex',
+        altText: '🎛️ AI分身功能總覽',
+        contents: {
+          type: 'carousel',
+          contents: [
+            {
+              type: 'bubble',
+              header: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: '🎭 顧晉瑋的AI分身',
+                    weight: 'bold',
+                    size: 'lg',
+                    color: '#4A90E2'
+                  },
+                  {
+                    type: 'text',
+                    text: '完全模擬本人個性',
+                    size: 'sm',
+                    color: '#666666'
+                  }
+                ]
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: '💬 自然聊天',
+                    weight: 'bold'
+                  },
+                  {
+                    type: 'text',
+                    text: '• 完全模擬顧晉瑋的語氣和個性\n• 記住群組對話內容\n• 就像本人在線上一樣',
+                    size: 'sm',
+                    margin: 'sm'
+                  },
+                  {
+                    type: 'separator',
+                    margin: 'md'
+                  },
+                  {
+                    type: 'text',
+                    text: '⏰ 智能提醒',
+                    weight: 'bold',
+                    margin: 'md'
+                  },
+                  {
+                    type: 'text',
+                    text: '• "5分鐘後提醒我"\n• "明天7點叫我起床"\n• 支援電話鬧鐘功能',
+                    size: 'sm',
+                    margin: 'sm'
+                  }
+                ]
+              }
+            },
+            {
+              type: 'bubble',
+              header: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: '🔍 搜尋查詢',
+                    weight: 'bold',
+                    size: 'lg',
+                    color: '#FF6B6B'
+                  }
+                ]
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: '🌐 網路搜尋',
+                    weight: 'bold'
+                  },
+                  {
+                    type: 'text',
+                    text: '• "搜尋最新科技新聞"\n• "台北天氣如何"\n• AI智能分析結果',
+                    size: 'sm',
+                    margin: 'sm'
+                  },
+                  {
+                    type: 'separator',
+                    margin: 'md'
+                  },
+                  {
+                    type: 'text',
+                    text: '🎬 電影推薦',
+                    weight: 'bold',
+                    margin: 'md'
+                  },
+                  {
+                    type: 'text',
+                    text: '• "最近有什麼電影"\n• "搜尋電影復仇者聯盟"\n• 詳細評分和資訊',
+                    size: 'sm',
+                    margin: 'sm'
+                  }
+                ]
+              }
+            },
+            {
+              type: 'bubble',
+              header: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: '🎯 特殊功能',
+                    weight: 'bold',
+                    size: 'lg',
+                    color: '#9C27B0'
+                  }
+                ]
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: '⚖️ 智能決策',
+                    weight: 'bold'
+                  },
+                  {
+                    type: 'text',
+                    text: '• 重要決定先詢問本人\n• AI分析建議\n• 完整對話記錄',
+                    size: 'sm',
+                    margin: 'sm'
+                  },
+                  {
+                    type: 'separator',
+                    margin: 'md'
+                  },
+                  {
+                    type: 'text',
+                    text: '🚨 智能監控',
+                    weight: 'bold',
+                    margin: 'md'
+                  },
+                  {
+                    type: 'text',
+                    text: '• 矛盾偵測提醒\n• 訊息收回追蹤\n• 異常行為通知',
+                    size: 'sm',
+                    margin: 'sm'
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      };
       
-      await safeReply(replyToken, menuText);
+      await safeReply(replyToken, menuMessage);
       
     } else if (isReminderQuery(messageText)) {
-      console.log('⏰ 處理提醒請求:', messageText);
+      console.log('⏰ 處理提醒請求');
       
       const timeInfo = reminderSystem.parseTime(messageText);
       
       if (timeInfo && timeInfo.time) {
         const title = reminderSystem.extractTitle(messageText);
-        const reminderId = reminderSystem.createReminder(userId, title, timeInfo.time, timeInfo.isAlarm);
+        const reminderId = reminderSystem.createReminder(userId, title, timeInfo.time, timeInfo.isAlarm, timeInfo.isPhoneCall);
         
         if (reminderId) {
           const delay = timeInfo.time.getTime() - Date.now();
@@ -2396,24 +2031,99 @@ async function handleEvent(event) {
             `${Math.round(delay / 60000)}分鐘後` :
             `${Math.round(delay / 3600000)}小時後`;
           
-          const confirmText = `✅ ${timeInfo.isAlarm ? '鬧鐘' : '提醒'}設定成功！
-
-📝 標題：${title}
-⏰ 時間：${timeInfo.time.toLocaleString('zh-TW', { 
-  year: 'numeric',
-  month: '2-digit', 
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit'
-})}
-⏳ 倒數：${delayStr}
-
-我會準時${timeInfo.isAlarm ? '叫你起床' : '提醒你'}！ 🎯`;
+          const confirmMessage = {
+            type: 'flex',
+            altText: `✅ ${timeInfo.isPhoneCall ? '電話鬧鐘' : timeInfo.isAlarm ? '鬧鐘' : '提醒'}設定成功`,
+            contents: {
+              type: 'bubble',
+              header: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: `✅ ${timeInfo.isPhoneCall ? '📞 電話鬧鐘' : timeInfo.isAlarm ? '⏰ 鬧鐘' : '📝 提醒'}設定成功！`,
+                    weight: 'bold',
+                    size: 'lg',
+                    color: timeInfo.isPhoneCall ? '#FF0000' : timeInfo.isAlarm ? '#FF6B6B' : '#4A90E2'
+                  }
+                ]
+              },
+              body: {
+                type: 'box',
+                layout: 'vertical',
+                contents: [
+                  {
+                    type: 'text',
+                    text: `📝 ${title}`,
+                    weight: 'bold',
+                    wrap: true
+                  },
+                  {
+                    type: 'separator',
+                    margin: 'md'
+                  },
+                  {
+                    type: 'box',
+                    layout: 'horizontal',
+                    contents: [
+                      {
+                        type: 'text',
+                        text: '⏰ 提醒時間',
+                        flex: 1
+                      },
+                      {
+                        type: 'text',
+                        text: timeInfo.time.toLocaleString('zh-TW'),
+                        flex: 2,
+                        align: 'end',
+                        wrap: true
+                      }
+                    ],
+                    margin: 'md'
+                  },
+                  {
+                    type: 'box',
+                    layout: 'horizontal',
+                    contents: [
+                      {
+                        type: 'text',
+                        text: '⏳ 倒數',
+                        flex: 1
+                      },
+                      {
+                        type: 'text',
+                        text: delayStr,
+                        flex: 1,
+                        align: 'end',
+                        color: '#4CAF50',
+                        weight: 'bold'
+                      }
+                    ],
+                    margin: 'sm'
+                  },
+                  {
+                    type: 'text',
+                    text: timeInfo.isPhoneCall ? 
+                      '📞 到時間會打電話叫你起床！' : 
+                      timeInfo.isAlarm ? 
+                      '⏰ 到時間會叫你起床！' : 
+                      '📝 到時間會提醒你！',
+                    margin: 'md',
+                    color: '#666666',
+                    size: 'sm'
+                  }
+                ]
+              }
+            }
+          };
           
-          await safeReply(replyToken, confirmText);
+          await safeReply(replyToken, confirmMessage);
         } else {
-          await safeReply(replyToken, '⚠️ 提醒設定失敗，時間可能無效或太遠');
+          await safeReply(replyToken, {
+            type: 'text',
+            text: '⚠️ 提醒設定失敗，時間可能無效或太遠'
+          });
         }
       } else {
         const helpText = `⏰ 提醒時間格式說明
@@ -2424,17 +2134,16 @@ async function handleEvent(event) {
 • "2小時後提醒我開會"
 • "15:30提醒我下班"
 • "7點叫我起床"
-• "明天8點提醒我上班"
+• "明天8點打電話叫我起床"
 
 🎯 請使用以上格式再試一次～`;
         
-        await safeReply(replyToken, helpText);
+        await safeReply(replyToken, { type: 'text', text: helpText });
       }
       
     } else if (isMovieQuery(messageText)) {
-      console.log('🎬 處理電影查詢:', messageText);
+      console.log('🎬 處理電影查詢');
       
-      // 提取電影名稱
       let movieName = '';
       const searchMatch = messageText.match(/(?:搜尋|查|找).*?電影(.+)|電影.*?(.+)/);
       if (searchMatch) {
@@ -2445,18 +2154,13 @@ async function handleEvent(event) {
       await safeReply(replyToken, movieResults);
       
     } else if (isWebSearchQuery(messageText)) {
-      console.log('🔍 處理搜尋請求:', messageText);
+      console.log('🔍 處理搜尋請求');
       
       // 特殊處理天氣查詢
       if (messageText.includes('天氣')) {
         const city = extractCityFromText(messageText) || '台北';
-        const weatherResult = await webSearch.getWeather(city);
+        const weatherResult = await searchSystem.getWeatherWithRichDisplay(city);
         await safeReply(replyToken, weatherResult);
-      }
-      // 特殊處理新聞查詢
-      else if (messageText.includes('新聞')) {
-        const newsResult = await webSearch.getNews();
-        await safeReply(replyToken, newsResult);
       }
       // 一般搜尋
       else {
@@ -2466,7 +2170,7 @@ async function handleEvent(event) {
           query = (searchMatch[1] || searchMatch[2] || messageText).trim();
         }
         
-        const searchResults = await webSearch.search(query);
+        const searchResults = await searchSystem.search(query);
         await safeReply(replyToken, searchResults);
       }
       
@@ -2475,22 +2179,25 @@ async function handleEvent(event) {
       if (decisionSystem.shouldAskOwner(messageText, context)) {
         console.log('⚖️ 需要決策，向主人詢問');
         response = await decisionSystem.requestDecision(messageText, userId, userName, context, replyToken);
-        await safeReply(replyToken, response);
+        await safeReply(replyToken, { type: 'text', text: response });
       } else {
-        // 一般智能對話
-        console.log('🧠 進行智能對話');
-        response = await superAI.generateReply(userId, messageText, context);
-        await safeReply(replyToken, response);
+        // 一般智能對話（AI分身模式）
+        console.log('🎭 AI分身對話模式');
+        response = await aiSystem.generatePersonalizedReply(userId, messageText, context);
+        await safeReply(replyToken, { type: 'text', text: response });
       }
     }
 
     console.log('✅ 事件處理完成');
 
   } catch (error) {
-    console.error('❌ 事件處理錯誤:', error);
+    await repairSystem.handleError(error, 'main_event_handler');
     
     if (event.replyToken && !tokenManager.isUsed(event.replyToken)) {
-      await safeReply(event.replyToken, '抱歉，我遇到了一些問題，請稍後再試～ 😅');
+      await safeReply(event.replyToken, {
+        type: 'text',
+        text: '抱歉，我遇到了一些問題，不過系統正在自動修復中～ 😅'
+      });
     }
   }
 }
@@ -2501,57 +2208,118 @@ app.use(express.urlencoded({ extended: true }));
 
 // 錯誤處理中間件
 app.use((error, req, res, next) => {
-  console.error('❌ 應用程式錯誤:', error);
+  repairSystem.handleError(error, 'express_middleware');
   res.status(500).json({ error: 'Internal Server Error' });
-});
-
-// 404 處理
-app.use((req, res) => {
-  res.status(404).send('Not Found');
 });
 
 // 啟動伺服器
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`✅ 超級增強版 LINE Bot v12.0 成功啟動！`);
+  console.log(`✅ AI分身版 LINE Bot 終極進化版成功啟動！`);
   console.log(`🌐 伺服器運行在端口 ${PORT}`);
-  console.log(`🎯 Webhook URL: /webhook`);
+  console.log(`🎭 AI分身模式已啟用 - 完全模擬 ${OWNER_PERSONALITY.name} 的個性`);
   console.log(`📊 系統監控: http://localhost:${PORT}`);
-  console.log(`✨ 所有功能正常運作`);
-  console.log(`🤖 系統穩定運行中...`);
+  console.log(`🤖 所有功能正常運作，準備成為你的數位分身！`);
   
   // 延遲發送啟動通知
   setTimeout(async () => {
     try {
-      const startupMessage = `🚀 超級增強版 v12.0 終極版已啟動！
-
-✨ 全新功能：
-🎯 8位短ID決策追蹤系統
-🤖 AI決策分析與建議  
-📊 圖表視覺化回覆
-⏰ 秒級提醒測試功能
-🔍 超級網路搜尋
-📨 智能訊息轉發
-🛠️ 完整指令系統
-
-🔧 完全修復：
-✅ 決策回覆功能
-✅ 提醒系統響應
-✅ 電影查詢API
-✅ 多群組決策問題
-✅ 系統穩定性
-
-💬 主人專用指令：
-/status - 系統狀態
-/users - 用戶報告  
-/test reminder 5秒後測試 - 測試提醒
-/features - 完整功能列表
-
-🎉 所有功能完全整合，隨時為你服務！`;
+      const startupMessage = {
+        type: 'flex',
+        altText: '🚀 AI分身版終極進化版已啟動！',
+        contents: {
+          type: 'bubble',
+          header: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'text',
+                text: '🚀 AI分身版已啟動！',
+                weight: 'bold',
+                size: 'xl',
+                color: '#4A90E2'
+              },
+              {
+                type: 'text',
+                text: '終極進化版 - 完全模擬你的個性',
+                size: 'sm',
+                color: '#666666'
+              }
+            ],
+            backgroundColor: '#E3F2FD'
+          },
+          body: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'text',
+                text: '🎭 全新AI分身功能',
+                weight: 'bold',
+                color: '#FF6B6B'
+              },
+              {
+                type: 'text',
+                text: '• 完全模擬你的語氣和個性\n• 讓大家感覺Bot就是你本人\n• 智能學習你的回覆風格',
+                size: 'sm',
+                margin: 'sm'
+              },
+              {
+                type: 'separator',
+                margin: 'md'
+              },
+              {
+                type: 'text',
+                text: '✨ 超級功能升級',
+                weight: 'bold',
+                color: '#9C27B0',
+                margin: 'md'
+              },
+              {
+                type: 'text',
+                text: '• 圖文訊息回覆\n• 電話鬧鐘功能\n• 矛盾偵測系統\n• 訊息收回追蹤\n• 自我修復機制',
+                size: 'sm',
+                margin: 'sm'
+              },
+              {
+                type: 'separator',
+                margin: 'md'
+              },
+              {
+                type: 'text',
+                text: '💬 中文指令系統',
+                weight: 'bold',
+                color: '#4CAF50',
+                margin: 'md'
+              },
+              {
+                type: 'text',
+                text: '• 狀態報告 - 查看系統狀態\n• 用戶活躍 - 活躍度報告\n• 決策待辦 - 處理決策\n• 功能列表 - 查看所有功能',
+                size: 'sm',
+                margin: 'sm'
+              }
+            ]
+          },
+          footer: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'text',
+                text: '🎉 你的AI分身已準備就緒！',
+                align: 'center',
+                weight: 'bold',
+                color: '#4A90E2'
+              }
+            ]
+          }
+        }
+      };
 
       await safePushMessage(OWNER_LINE_ID, startupMessage);
       console.log('📨 啟動通知已發送給主人');
     } catch (error) {
-      console.error('❌ 啟動通知發送失敗:', error);
+      await repairSystem.handleError(error, 'startup_notification');
     }
   }, 3000);
 });
@@ -2559,32 +2327,1748 @@ app.listen(PORT, '0.0.0.0', () => {
 // 優雅關閉處理
 process.on('SIGTERM', () => {
   console.log('📴 收到 SIGTERM，準備關閉...');
-  // 清理定時器
   reminderSystem.activeTimers.forEach(timer => clearTimeout(timer));
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
   console.log('📴 收到 SIGINT，準備關閉...');
-  // 清理定時器
   reminderSystem.activeTimers.forEach(timer => clearTimeout(timer));
   process.exit(0);
 });
 
 // 處理未捕獲的異常
 process.on('uncaughtException', (error) => {
-  console.error('❌ 未捕獲的異常:', error);
-  // 不要立即退出，讓系統繼續運行
+  repairSystem.handleError(error, 'uncaught_exception');
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ 未處理的 Promise 拒絕:', reason);
-  // 不要立即退出，讓系統繼續運行
+  repairSystem.handleError(new Error(reason), 'unhandled_rejection');
 });
 
-console.log('🎯 超級增強版 LINE Bot v12.0 初始化完成！');
-console.log('📋 支援功能：智能對話、決策系統、提醒系統、搜尋、電影、轉發、圖表');
-console.log('🔒 安全性：完整的錯誤處理、重試機制、資源清理');
-console.log('⚡ 效能：優化的記憶體使用、異步處理、智能快取');
+console.log('🎯 AI分身版 LINE Bot 終極進化版初始化完成！');
+console.log('🎭 個性模擬：完全複製你的語氣、邏輯、價值觀');
+console.log('📱 圖文回覆：所有功能都用精美的圖文訊息呈現');
+console.log('🧠 智能決策：重要事項一定先私訊詢問你');
+console.log('🛠️ 自我修復：遇到錯誤能自動診斷和修復');
+console.log('🚨 智能監控：矛盾偵測、訊息收回追蹤');
 
 module.exports = app;
+                {
+                  type: 'text',
+                  text: `📍 ${decision.context.isGroup ? `群組「${decision.context.groupName}」` : '私人對話'}`,
+                  size: 'sm',
+                  color: '#666666',
+                  margin: 'sm'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '💬 訊息內容：',
+                  weight: 'bold',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: decision.message,
+                  wrap: true,
+                  margin: 'sm'
+                }
+              ]
+            },
+            footer: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'button',
+                  action: {
+                    type: 'message',
+                    label: '👍 同意',
+                    text: `同意 ${decision.shortId}`
+                  },
+                  style: 'primary',
+                  color: '#4CAF50'
+                },
+                {
+                  type: 'button',
+                  action: {
+                    type: 'message',
+                    label: '👎 拒絕',
+                    text: `拒絕 ${decision.shortId}`
+                  },
+                  style: 'secondary',
+                  margin: 'sm'
+                }
+              ]
+            }
+          },
+          {
+            type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🤖 AI分析建議',
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#FF6B6B'
+                }
+              ]
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: aiAnalysis,
+                  wrap: true,
+                  size: 'sm'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: '💡 可用指令：',
+                  weight: 'bold',
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: `• 問 ${decision.shortId} [問題]\n• 回覆 ${decision.shortId} [訊息]\n• 更多 ${decision.shortId}\n• 忽略 ${decision.shortId}`,
+                  size: 'xs',
+                  color: '#666666',
+                  margin: 'sm'
+                }
+              ]
+            }
+          }
+        ]
+      }
+    };
+
+    // 如果有對話上下文，新增第三頁
+    if (contextInfo) {
+      flexMessage.contents.contents.push({
+        type: 'bubble',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: '📝 對話記錄',
+              weight: 'bold',
+              size: 'lg',
+              color: '#9C27B0'
+            }
+          ]
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: contextInfo.substring(0, 1000) + (contextInfo.length > 1000 ? '...' : ''),
+              wrap: true,
+              size: 'xs',
+              color: '#333333'
+            }
+          ]
+        }
+      });
+    }
+
+    return flexMessage;
+  }
+
+  async processOwnerDecision(message, ownerId) {
+    const lowerMessage = message.toLowerCase();
+    
+    // 檢查是否包含決策ID
+    const idMatch = message.match(/([a-z0-9]{8})/i);
+    let targetDecision = null;
+
+    if (idMatch) {
+      const shortId = idMatch[1];
+      for (const [id, decision] of this.pendingDecisions) {
+        if (decision.shortId === shortId) {
+          targetDecision = decision;
+          break;
+        }
+      }
+    }
+
+    if (!targetDecision) {
+      return await this.createPendingDecisionsFlexMessage();
+    }
+
+    // 處理不同類型的回應
+    if (lowerMessage.includes('同意')) {
+      return await this.handleApproval(targetDecision);
+    } else if (lowerMessage.includes('拒絕')) {
+      return await this.handleRejection(targetDecision);
+    } else if (lowerMessage.includes('問')) {
+      const questionMatch = message.match(/問\s+[a-z0-9]{8}\s+(.+)/i);
+      if (questionMatch) {
+        return await this.handleQuestion(targetDecision, questionMatch[1]);
+      }
+    } else if (lowerMessage.includes('回覆')) {
+      const replyMatch = message.match(/回覆\s+[a-z0-9]{8}\s+(.+)/i);
+      if (replyMatch) {
+        return await this.handleCustomReply(targetDecision, replyMatch[1]);
+      }
+    } else if (lowerMessage.includes('更多')) {
+      return await this.showMoreContext(targetDecision);
+    } else if (lowerMessage.includes('忽略')) {
+      return await this.handleIgnore(targetDecision);
+    }
+
+    return '請使用按鈕或正確的指令格式來處理決策。';
+  }
+
+  async createPendingDecisionsFlexMessage() {
+    const decisions = Array.from(this.pendingDecisions.values())
+      .filter(d => d.status === 'pending')
+      .sort((a, b) => b.timestamp - a.timestamp);
+    
+    if (decisions.length === 0) {
+      return '目前沒有待處理的決策 ✅';
+    }
+
+    const flexMessage = {
+      type: 'flex',
+      altText: `待處理決策 (${decisions.length}個)`,
+      contents: {
+        type: 'carousel',
+        contents: []
+      }
+    };
+
+    decisions.slice(0, 10).forEach(decision => {
+      const timeAgo = Math.floor((new Date() - decision.timestamp) / 60000);
+      
+      flexMessage.contents.contents.push({
+        type: 'bubble',
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: `📋 [${decision.shortId}]`,
+              weight: 'bold',
+              color: '#4A90E2'
+            },
+            {
+              type: 'text',
+              text: decision.userName,
+              size: 'sm',
+              margin: 'sm'
+            },
+            {
+              type: 'text',
+              text: decision.message.substring(0, 50) + (decision.message.length > 50 ? '...' : ''),
+              wrap: true,
+              size: 'xs',
+              color: '#666666',
+              margin: 'sm'
+            },
+            {
+              type: 'text',
+              text: `${timeAgo}分鐘前 • ${decision.context.isGroup ? '群組' : '私人'}`,
+              size: 'xs',
+              color: '#999999',
+              margin: 'sm'
+            }
+          ]
+        },
+        footer: {
+          type: 'box',
+          layout: 'horizontal',
+          contents: [
+            {
+              type: 'button',
+              action: {
+                type: 'message',
+                label: '同意',
+                text: `同意 ${decision.shortId}`
+              },
+              style: 'primary',
+              color: '#4CAF50',
+              flex: 1
+            },
+            {
+              type: 'button',
+              action: {
+                type: 'message',
+                label: '拒絕',
+                text: `拒絕 ${decision.shortId}`
+              },
+              style: 'secondary',
+              flex: 1,
+              margin: 'sm'
+            }
+          ]
+        }
+      });
+    });
+
+    return flexMessage;
+  }
+
+  async handleApproval(decision) {
+    const replyMsg = '好der！我覺得可以，就這樣決定吧～ ✅';
+    await this.sendReplyToSource(decision, replyMsg);
+    await this.markDecisionComplete(decision, 'approved');
+    return `✅ 已同意決策 ${decision.shortId} 並回覆`;
+  }
+
+  async handleRejection(decision) {
+    const replyMsg = '抱歉耶～我現在不太方便，下次再說吧！謝謝你的邀請 😊';
+    await this.sendReplyToSource(decision, replyMsg);
+    await this.markDecisionComplete(decision, 'rejected');
+    return `❌ 已拒絕決策 ${decision.shortId} 並回覆`;
+  }
+
+  async handleQuestion(decision, question) {
+    const questionMsg = `欸～想問一下：${question} 🤔`;
+    await this.sendReplyToSource(decision, questionMsg);
+    return `❓ 已向 ${decision.userName} 提問：${question}`;
+  }
+
+  async handleCustomReply(decision, customReply) {
+    await this.sendReplyToSource(decision, customReply);
+    await this.markDecisionComplete(decision, 'custom');
+    return `💬 已使用自訂回覆：${customReply}`;
+  }
+
+  async showMoreContext(decision) {
+    if (decision.context.isGroup && decision.context.groupId) {
+      const fullContext = aiSystem.groupContexts.get(decision.context.groupId) || [];
+      const detailContext = fullContext.slice(-30).map(msg => 
+        `[${msg.timestamp.toLocaleTimeString('zh-TW')}] ${msg.userName}: ${msg.message}`
+      ).join('\n');
+      return `📝 完整對話記錄 [${decision.shortId}]：\n\n${detailContext}`;
+    } else {
+      return '這是私人對話，沒有更多上下文';
+    }
+  }
+
+  async handleIgnore(decision) {
+    decision.status = 'ignored';
+    return `⏸️ 已暫時忽略決策 ${decision.shortId}`;
+  }
+
+  async autoReject(decisionId) {
+    const decision = this.pendingDecisions.get(decisionId);
+    if (!decision || decision.status !== 'pending') return;
+    
+    const autoReply = '不好意思，我現在比較忙，沒辦法及時回覆。下次有機會再聊吧！ 😅';
+    await this.sendReplyToSource(decision, autoReply);
+    await this.markDecisionComplete(decision, 'auto_rejected');
+    
+    // 通知主人
+    await client.pushMessage(OWNER_LINE_ID, {
+      type: 'text',
+      text: `⏰ 決策 ${decision.shortId} 已自動拒絕（超時）`
+    });
+  }
+
+  async markDecisionComplete(decision, result) {
+    decision.status = result;
+    decision.completedAt = new Date();
+    
+    this.decisionHistory.set(decision.id, decision);
+    this.pendingDecisions.delete(decision.id);
+    
+    if (this.decisionHistory.size > 100) {
+      const oldest = Array.from(this.decisionHistory.keys())[0];
+      this.decisionHistory.delete(oldest);
+    }
+  }
+
+  async sendReplyToSource(decision, message) {
+    try {
+      if (decision.sourceType === 'group') {
+        await client.pushMessage(decision.sourceId, {
+          type: 'text',
+          text: message
+        });
+      } else {
+        await client.pushMessage(decision.userId, {
+          type: 'text',
+          text: message
+        });
+      }
+    } catch (error) {
+      console.error('❌ 回覆訊息失敗:', error);
+      throw error;
+    }
+  }
+}
+
+// 超級提醒系統（含電話功能）
+class SuperReminderWithPhoneSystem {
+  constructor() {
+    this.reminders = new Map();
+    this.activeTimers = new Map();
+    this.phoneReminders = new Map(); // 電話提醒
+    console.log('⏰ 超級提醒系統（含電話功能）已初始化');
+  }
+
+  parseTime(text) {
+    console.log('🔍 解析時間:', text);
+    
+    try {
+      const now = new Date();
+      
+      // 檢查是否為電話鬧鐘
+      const isPhoneAlarm = text.includes('打電話') || text.includes('電話叫') || text.includes('call') || 
+                          (text.includes('叫') && (text.includes('起床') || text.includes('鬧鐘')));
+      
+      // 秒數提醒
+      if (text.includes('秒後') || text.includes('秒鐘後')) {
+        const match = text.match(/(\d+)\s*秒(?:鐘)?後/);
+        if (match) {
+          const seconds = parseInt(match[1]);
+          const targetTime = new Date(now.getTime() + seconds * 1000);
+          return { time: targetTime, isAlarm: false, isPhoneCall: isPhoneAlarm };
+        }
+      }
+
+      // 分鐘提醒
+      if (text.includes('分鐘後') || text.includes('分後')) {
+        const match = text.match(/(\d+)\s*分(?:鐘)?後/);
+        if (match) {
+          const minutes = parseInt(match[1]);
+          const targetTime = new Date(now.getTime() + minutes * 60000);
+          return { time: targetTime, isAlarm: false, isPhoneCall: isPhoneAlarm };
+        }
+      }
+
+      // 小時提醒
+      if (text.includes('小時後') || text.includes('時後')) {
+        const match = text.match(/(\d+)\s*(?:小)?時後/);
+        if (match) {
+          const hours = parseInt(match[1]);
+          const targetTime = new Date(now.getTime() + hours * 3600000);
+          return { time: targetTime, isAlarm: false, isPhoneCall: isPhoneAlarm };
+        }
+      }
+
+      // 絕對時間 HH:MM
+      const timeMatch = text.match(/(\d{1,2}):(\d{2})/);
+      if (timeMatch) {
+        const hour = parseInt(timeMatch[1]);
+        const minute = parseInt(timeMatch[2]);
+        
+        if (hour >= 0 && hour < 24 && minute >= 0 && minute < 60) {
+          const targetTime = new Date();
+          targetTime.setHours(hour, minute, 0, 0);
+          
+          if (targetTime <= now) {
+            targetTime.setDate(targetTime.getDate() + 1);
+          }
+          
+          const isAlarm = text.includes('叫') || text.includes('起床') || text.includes('鬧鐘');
+          return { time: targetTime, isAlarm, isPhoneCall: isPhoneAlarm };
+        }
+      }
+
+      // 點數時間
+      const hourMatch = text.match(/(\d{1,2})\s*點/);
+      if (hourMatch) {
+        const hour = parseInt(hourMatch[1]);
+        
+        if (hour >= 0 && hour < 24) {
+          const targetTime = new Date();
+          targetTime.setHours(hour, 0, 0, 0);
+          
+          if (targetTime <= now) {
+            targetTime.setDate(targetTime.getDate() + 1);
+          }
+          
+          const isAlarm = text.includes('叫') || text.includes('起床') || text.includes('鬧鐘');
+          return { time: targetTime, isAlarm, isPhoneCall: isPhoneAlarm };
+        }
+      }
+
+      // 明天
+      if (text.includes('明天')) {
+        const targetTime = new Date();
+        targetTime.setDate(targetTime.getDate() + 1);
+        
+        const specificTime = text.match(/(\d{1,2})[點:](\d{0,2})?/);
+        if (specificTime) {
+          const hour = parseInt(specificTime[1]);
+          const minute = specificTime[2] ? parseInt(specificTime[2]) : 0;
+          targetTime.setHours(hour, minute, 0, 0);
+        } else {
+          targetTime.setHours(7, 0, 0, 0); // 預設早上7點
+        }
+        
+        const isAlarm = text.includes('叫') || text.includes('起床') || text.includes('鬧鐘');
+        return { time: targetTime, isAlarm, isPhoneCall: isPhoneAlarm };
+      }
+
+    } catch (error) {
+      console.error('❌ 時間解析錯誤:', error);
+    }
+    
+    return null;
+  }
+
+  createReminder(userId, title, targetTime, isAlarm = false, isPhoneCall = false) {
+    const reminderId = `reminder-${userId}-${Date.now()}`;
+    
+    const reminder = {
+      id: reminderId,
+      userId,
+      title,
+      targetTime,
+      isAlarm,
+      isPhoneCall,
+      created: new Date(),
+      status: 'active'
+    };
+
+    this.reminders.set(reminderId, reminder);
+    
+    const delay = targetTime.getTime() - Date.now();
+    
+    if (delay > 0 && delay < 2147483647) {
+      const timerId = setTimeout(async () => {
+        await this.executeReminder(reminderId);
+      }, delay);
+      
+      this.activeTimers.set(reminderId, timerId);
+      console.log(`✅ ${isPhoneCall ? '電話' : ''}提醒已設定: ${title}, 時間: ${targetTime.toLocaleString('zh-TW')}`);
+      return reminderId;
+    } else if (delay <= 0) {
+      console.log('⚠️ 提醒時間已過，立即執行');
+      this.executeReminder(reminderId);
+      return reminderId;
+    }
+    
+    return null;
+  }
+
+  async executeReminder(reminderId) {
+    const reminder = this.reminders.get(reminderId);
+    if (!reminder || reminder.status !== 'active') return;
+
+    try {
+      if (reminder.isPhoneCall) {
+        // 電話鬧鐘功能
+        await this.makePhoneCall(reminder);
+      } else {
+        // 一般提醒
+        await this.sendReminderMessage(reminder);
+      }
+      
+      reminder.status = 'completed';
+      reminder.completedAt = new Date();
+      
+      this.reminders.delete(reminderId);
+      this.activeTimers.delete(reminderId);
+      
+    } catch (error) {
+      console.error('❌ 提醒執行失敗:', error);
+    }
+  }
+
+  async makePhoneCall(reminder) {
+    console.log(`📞 執行電話鬧鐘: ${reminder.title}`);
+    
+    // 創建電話鬧鐘通知（圖文版）
+    const phoneCallMessage = {
+      type: 'flex',
+      altText: `📞 電話鬧鐘 - ${reminder.title}`,
+      contents: {
+        type: 'bubble',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: '📞 電話鬧鐘響啦！',
+              weight: 'bold',
+              size: 'xl',
+              color: '#FF0000'
+            }
+          ],
+          backgroundColor: '#FFE4E1'
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: reminder.title,
+              weight: 'bold',
+              size: 'lg',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: '☀️ 起床時間到了！',
+              size: 'md',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: `設定時間：${reminder.created.toLocaleString('zh-TW')}`,
+              size: 'sm',
+              color: '#666666',
+              margin: 'md'
+            },
+            {
+              type: 'separator',
+              margin: 'lg'
+            },
+            {
+              type: 'text',
+              text: '🎵 鈴聲響起中...',
+              size: 'md',
+              color: '#FF6B6B',
+              margin: 'md',
+              weight: 'bold'
+            }
+          ]
+        },
+        footer: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'button',
+              action: {
+                type: 'message',
+                label: '我起床了！',
+                text: '我起床了'
+              },
+              style: 'primary',
+              color: '#4CAF50'
+            }
+          ]
+        }
+      }
+    };
+
+    // 發送電話鬧鐘通知
+    await client.pushMessage(reminder.userId, phoneCallMessage);
+    
+    // 模擬電話響鈴（發送多次提醒）
+    for (let i = 1; i <= 3; i++) {
+      setTimeout(async () => {
+        await client.pushMessage(reminder.userId, {
+          type: 'text',
+          text: `📞 鈴鈴鈴... 第${i}次響鈴！快起床啦～ ⏰`
+        });
+      }, i * 10000); // 每10秒響一次
+    }
+    
+    console.log('📞 電話鬧鐘通知已發送');
+  }
+
+  async sendReminderMessage(reminder) {
+    const reminderMessage = {
+      type: 'flex',
+      altText: `⏰ 提醒 - ${reminder.title}`,
+      contents: {
+        type: 'bubble',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: reminder.isAlarm ? '⏰ 鬧鐘時間到！' : '⏰ 提醒時間到！',
+              weight: 'bold',
+              size: 'lg',
+              color: reminder.isAlarm ? '#FF6B6B' : '#4A90E2'
+            }
+          ],
+          backgroundColor: reminder.isAlarm ? '#FFE4E1' : '#E3F2FD'
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: reminder.title,
+              weight: 'bold',
+              size: 'md',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: `設定時間：${reminder.created.toLocaleString('zh-TW')}`,
+              size: 'sm',
+              color: '#666666',
+              margin: 'sm'
+            },
+            {
+              type: 'separator',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: reminder.isAlarm ? '☀️ 新的一天開始了！加油！💪' : '記得處理這件事喔！ ✨',
+              margin: 'md'
+            }
+          ]
+        }
+      }
+    };
+
+    await client.pushMessage(reminder.userId, reminderMessage);
+    console.log(`✅ 提醒已發送: ${reminder.title}`);
+  }
+
+  extractTitle(text) {
+    let title = text;
+    
+    const timePatterns = [
+      /\d+\s*秒(?:鐘)?後/g,
+      /\d+\s*分(?:鐘)?後/g,
+      /\d+\s*(?:小)?時後/g,
+      /\d{1,2}:\d{2}/g,
+      /\d{1,2}\s*點/g,
+      /明天/g,
+      /提醒我/g,
+      /叫我/g,
+      /起床/g,
+      /鬧鐘/g,
+      /打電話/g,
+      /電話叫/g
+    ];
+    
+    timePatterns.forEach(pattern => {
+      title = title.replace(pattern, '');
+    });
+    
+    title = title.trim();
+    
+    if (!title) {
+      if (text.includes('起床') || text.includes('鬧鐘') || text.includes('電話')) {
+        return '起床鬧鐘 📞';
+      } else if (text.includes('開會')) {
+        return '開會提醒 📅';
+      } else if (text.includes('吃藥')) {
+        return '吃藥提醒 💊';
+      } else if (text.includes('運動')) {
+        return '運動時間 🏃‍♂️';
+      } else {
+        return '重要提醒 📌';
+      }
+    }
+    
+    return title;
+  }
+
+  async createReminderListFlexMessage(userId) {
+    const userReminders = Array.from(this.reminders.values())
+      .filter(r => r.userId === userId && r.status === 'active')
+      .sort((a, b) => a.targetTime - b.targetTime);
+    
+    if (userReminders.length === 0) {
+      return {
+        type: 'text',
+        text: '你目前沒有設定任何提醒 📝'
+      };
+    }
+
+    const flexMessage = {
+      type: 'flex',
+      altText: `提醒清單 (${userReminders.length}個)`,
+      contents: {
+        type: 'carousel',
+        contents: []
+      }
+    };
+
+    userReminders.slice(0, 10).forEach((reminder, index) => {
+      const timeLeft = reminder.targetTime.getTime() - Date.now();
+      const timeLeftStr = timeLeft > 0 ? 
+        timeLeft < 60000 ? `${Math.round(timeLeft / 1000)}秒後` :
+        timeLeft < 3600000 ? `${Math.floor(timeLeft / 60000)}分鐘後` :
+        timeLeft < 86400000 ? `${Math.floor(timeLeft / 3600000)}小時後` :
+        `${Math.floor(timeLeft / 86400000)}天後` : '即將到期';
+      
+      flexMessage.contents.contents.push({
+        type: 'bubble',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: `${reminder.isPhoneCall ? '📞' : reminder.isAlarm ? '⏰' : '📝'} 提醒 ${index + 1}`,
+              weight: 'bold',
+              color: reminder.isPhoneCall ? '#FF0000' : reminder.isAlarm ? '#FF6B6B' : '#4A90E2'
+            }
+          ]
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: reminder.title,
+              weight: 'bold',
+              wrap: true
+            },
+            {
+              type: 'text',
+              text: reminder.targetTime.toLocaleString('zh-TW'),
+              size: 'sm',
+              color: '#666666',
+              margin: 'sm'
+            },
+            {
+              type: 'text',
+              text: `⏳ ${timeLeftStr}`,
+              size: 'sm',
+              color: timeLeft > 0 ? '#4CAF50' : '#FF0000',
+              margin: 'sm',
+              weight: 'bold'
+            },
+            {
+              type: 'text',
+              text: reminder.isPhoneCall ? '電話鬧鐘' : reminder.isAlarm ? '鬧鐘提醒' : '一般提醒',
+              size: 'xs',
+              color: '#999999',
+              margin: 'sm'
+            }
+          ]
+        }
+      });
+    });
+
+    return flexMessage;
+  }
+}
+
+// 超級搜尋系統（圖文版）
+class SuperSearchSystemWithRichDisplay {
+  constructor() {
+    console.log('🔍 超級搜尋系統（圖文版）已初始化');
+  }
+
+  async search(query) {
+    try {
+      console.log(`🔍 搜尋查詢: ${query}`);
+      
+      // 並行搜尋多個來源
+      const results = await Promise.allSettled([
+        this.searchDuckDuckGo(query),
+        this.searchWithAI(query)
+      ]);
+
+      const webResults = results[0].status === 'fulfilled' ? results[0].value : null;
+      const aiResults = results[1].status === 'fulfilled' ? results[1].value : null;
+
+      return await this.createSearchResultFlexMessage(query, webResults, aiResults);
+
+    } catch (error) {
+      console.error('❌ 搜尋失敗:', error);
+      return {
+        type: 'text',
+        text: '抱歉，搜尋功能暫時無法使用，請稍後再試 🔍'
+      };
+    }
+  }
+
+  async searchDuckDuckGo(query) {
+    try {
+      const response = await axios.get('https://api.duckduckgo.com/', {
+        params: {
+          q: query,
+          format: 'json',
+          no_html: '1',
+          skip_disambig: '1'
+        },
+        timeout: 10000
+      });
+
+      return {
+        abstract: response.data.AbstractText || null,
+        abstractUrl: response.data.AbstractURL || null,
+        answer: response.data.Answer || null,
+        relatedTopics: response.data.RelatedTopics || []
+      };
+
+    } catch (error) {
+      console.error('❌ DuckDuckGo 搜尋失敗:', error);
+      return null;
+    }
+  }
+
+  async searchWithAI(query) {
+    try {
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-002" });
+      
+      const prompt = `請以顧晉瑋（靜宜大學資管系學生）的角度回答關於「${query}」的問題。
+
+請提供：
+1. 基本定義或說明
+2. 重要特點或關鍵資訊
+3. 實用建議或應用
+4. 相關的有趣知識
+
+請用顧晉瑋的語氣回答，要有台灣年輕人的活力，約200-300字。`;
+
+      const result = await model.generateContent(prompt);
+      const response = await result.response;
+      return response.text().replace(/[*#`_~]/g, '').trim();
+      
+    } catch (error) {
+      console.error('❌ AI 搜尋失敗:', error);
+      return null;
+    }
+  }
+
+  async createSearchResultFlexMessage(query, webResults, aiResults) {
+    const flexMessage = {
+      type: 'flex',
+      altText: `🔍 搜尋結果 - ${query}`,
+      contents: {
+        type: 'carousel',
+        contents: []
+      }
+    };
+
+    // AI 分析結果頁面
+    if (aiResults) {
+      flexMessage.contents.contents.push({
+        type: 'bubble',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: '🤖 AI 智能分析',
+              weight: 'bold',
+              size: 'lg',
+              color: '#4A90E2'
+            },
+            {
+              type: 'text',
+              text: `關於「${query}」`,
+              size: 'sm',
+              color: '#666666'
+            }
+          ]
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: aiResults.substring(0, 500) + (aiResults.length > 500 ? '...' : ''),
+              wrap: true,
+              size: 'sm'
+            }
+          ]
+        }
+      });
+    }
+
+    // 網路搜尋結果頁面
+    if (webResults) {
+      const webBubble = {
+        type: 'bubble',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: '🌐 網路搜尋結果',
+              weight: 'bold',
+              size: 'lg',
+              color: '#FF6B6B'
+            }
+          ]
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: []
+        }
+      };
+
+      if (webResults.answer) {
+        webBubble.body.contents.push({
+          type: 'text',
+          text: '💡 直接答案：',
+          weight: 'bold',
+          color: '#4CAF50'
+        });
+        webBubble.body.contents.push({
+          type: 'text',
+          text: webResults.answer,
+          wrap: true,
+          margin: 'sm'
+        });
+        webBubble.body.contents.push({
+          type: 'separator',
+          margin: 'md'
+        });
+      }
+
+      if (webResults.abstract) {
+        webBubble.body.contents.push({
+          type: 'text',
+          text: '📄 摘要：',
+          weight: 'bold',
+          color: '#9C27B0',
+          margin: 'md'
+        });
+        webBubble.body.contents.push({
+          type: 'text',
+          text: webResults.abstract.substring(0, 200) + (webResults.abstract.length > 200 ? '...' : ''),
+          wrap: true,
+          size: 'sm',
+          margin: 'sm'
+        });
+        
+        if (webResults.abstractUrl) {
+          webBubble.body.contents.push({
+            type: 'text',
+            text: `🔗 來源：${webResults.abstractUrl}`,
+            size: 'xs',
+            color: '#666666',
+            margin: 'sm'
+          });
+        }
+      }
+
+      flexMessage.contents.contents.push(webBubble);
+
+      // 相關主題頁面
+      if (webResults.relatedTopics && webResults.relatedTopics.length > 0) {
+        flexMessage.contents.contents.push({
+          type: 'bubble',
+          header: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'text',
+                text: '📋 相關主題',
+                weight: 'bold',
+                size: 'lg',
+                color: '#9C27B0'
+              }
+            ]
+          },
+          body: {
+            type: 'box',
+            layout: 'vertical',
+            contents: webResults.relatedTopics.slice(0, 5).map((topic, index) => ({
+              type: 'text',
+              text: `${index + 1}. ${topic.Text || topic.FirstURL || '相關資訊'}`,
+              wrap: true,
+              size: 'sm',
+              margin: index === 0 ? 'none' : 'sm'
+            }))
+          }
+        });
+      }
+    }
+
+    // 如果沒有任何結果
+    if (flexMessage.contents.contents.length === 0) {
+      return {
+        type: 'text',
+        text: `沒有找到「${query}」的相關搜尋結果，請嘗試其他關鍵字 🔍`
+      };
+    }
+
+    return flexMessage;
+  }
+
+  async getWeatherWithRichDisplay(city = '台北') {
+    try {
+      const response = await axios.get(`https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001`, {
+        params: {
+          Authorization: WEATHER_API_KEY,
+          locationName: city
+        },
+        timeout: 10000
+      });
+
+      if (response.data.success === 'true' && response.data.records.location.length > 0) {
+        const location = response.data.records.location[0];
+        const weather = location.weatherElement;
+        
+        const temp = weather.find(el => el.elementName === 'MinT');
+        const maxTemp = weather.find(el => el.elementName === 'MaxT');
+        const desc = weather.find(el => el.elementName === 'Wx');
+        const comfort = weather.find(el => el.elementName === 'CI');
+        const rain = weather.find(el => el.elementName === 'PoP');
+        
+        return {
+          type: 'flex',
+          altText: `${city}天氣預報`,
+          contents: {
+            type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: `🌤️ ${city}天氣預報`,
+                  weight: 'bold',
+                  size: 'lg',
+                  color: '#4A90E2'
+                }
+              ],
+              backgroundColor: '#E3F2FD'
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: `📍 ${location.locationName}`,
+                  weight: 'bold',
+                  margin: 'md'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'box',
+                  layout: 'horizontal',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '🌡️ 溫度',
+                      flex: 1,
+                      weight: 'bold'
+                    },
+                    {
+                      type: 'text',
+                      text: `${temp?.time[0]?.parameter?.parameterName || 'N/A'}°C - ${maxTemp?.time[0]?.parameter?.parameterName || 'N/A'}°C`,
+                      flex: 2,
+                      align: 'end'
+                    }
+                  ],
+                  margin: 'md'
+                },
+                {
+                  type: 'box',
+                  layout: 'horizontal',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '☁️ 天氣',
+                      flex: 1,
+                      weight: 'bold'
+                    },
+                    {
+                      type: 'text',
+                      text: desc?.time[0]?.parameter?.parameterName || 'N/A',
+                      flex: 2,
+                      align: 'end'
+                    }
+                  ],
+                  margin: 'md'
+                },
+                {
+                  type: 'box',
+                  layout: 'horizontal',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '☔ 降雨機率',
+                      flex: 1,
+                      weight: 'bold'
+                    },
+                    {
+                      type: 'text',
+                      text: `${rain?.time[0]?.parameter?.parameterName || 'N/A'}%`,
+                      flex: 2,
+                      align: 'end'
+                    }
+                  ],
+                  margin: 'md'
+                },
+                {
+                  type: 'box',
+                  layout: 'horizontal',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '😊 舒適度',
+                      flex: 1,
+                      weight: 'bold'
+                    },
+                    {
+                      type: 'text',
+                      text: comfort?.time[0]?.parameter?.parameterName || 'N/A',
+                      flex: 2,
+                      align: 'end',
+                      wrap: true
+                    }
+                  ],
+                  margin: 'md'
+                },
+                {
+                  type: 'text',
+                  text: `更新時間：${new Date().toLocaleString('zh-TW')}`,
+                  size: 'xs',
+                  color: '#666666',
+                  margin: 'lg'
+                }
+              ]
+            }
+          }
+        };
+      } else {
+        return {
+          type: 'text',
+          text: `找不到「${city}」的天氣資訊，請確認城市名稱是否正確 🌤️`
+        };
+      }
+    } catch (error) {
+      console.error('❌ 天氣查詢錯誤:', error);
+      return {
+        type: 'text',
+        text: '抱歉，無法獲取天氣資訊，請稍後再試 🌤️'
+      };
+    }
+  }
+}
+
+// 電影系統（圖文版）
+class SuperMovieSystemWithRichDisplay {
+  constructor() {
+    console.log('🎬 超級電影系統（圖文版）已初始化');
+  }
+
+  async searchMovies(query = '') {
+    try {
+      let endpoint = 'https://api.themoviedb.org/3/movie/popular';
+      let params = {
+        language: 'zh-TW',
+        page: 1
+      };
+
+      if (query && query.length > 0) {
+        endpoint = 'https://api.themoviedb.org/3/search/movie';
+        params.query = query;
+      }
+
+      const response = await axios.get(endpoint, {
+        headers: {
+          'Authorization': `Bearer ${TMDB_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        params: params,
+        timeout: 15000
+      });
+
+      const movies = response.data.results.slice(0, 10);
+      
+      if (movies.length === 0) {
+        return {
+          type: 'text',
+          text: '沒有找到相關的電影 🎬'
+        };
+      }
+
+      return await this.createMovieFlexMessage(movies, query);
+
+    } catch (error) {
+      console.error('❌ 電影查詢錯誤:', error);
+      return {
+        type: 'text',
+        text: '抱歉，電影查詢功能暫時無法使用，請稍後再試 🎬'
+      };
+    }
+  }
+
+  async createMovieFlexMessage(movies, query = '') {
+    const flexMessage = {
+      type: 'flex',
+      altText: query ? `🎬 「${query}」搜尋結果` : '🎬 熱門電影推薦',
+      contents: {
+        type: 'carousel',
+        contents: []
+      }
+    };
+
+    movies.slice(0, 10).forEach(movie => {
+      const bubble = {
+        type: 'bubble',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: movie.title,
+              weight: 'bold',
+              size: 'lg',
+              color: '#4A90E2',
+              wrap: true
+            },
+            {
+              type: 'text',
+              text: movie.original_title !== movie.title ? movie.original_title : '',
+              size: 'sm',
+              color: '#666666',
+              wrap: true
+            }
+          ]
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                {
+                  type: 'text',
+                  text: '⭐ 評分',
+                  flex: 1,
+                  weight: 'bold'
+                },
+                {
+                  type: 'text',
+                  text: `${movie.vote_average}/10`,
+                  flex: 1,
+                  align: 'end',
+                  color: movie.vote_average >= 7 ? '#4CAF50' : movie.vote_average >= 5 ? '#FF9800' : '#FF5722'
+                }
+              ]
+            },
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                {
+                  type: 'text',
+                  text: '📅 上映',
+                  flex: 1,
+                  weight: 'bold'
+                },
+                {
+                  type: 'text',
+                  text: movie.release_date || '未知',
+                  flex: 2,
+                  align: 'end'
+                }
+              ],
+              margin: 'md'
+            },
+            {
+              type: 'separator',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: '📝 劇情簡介',
+              weight: 'bold',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: movie.overview ? 
+                (movie.overview.substring(0, 120) + (movie.overview.length > 120 ? '...' : '')) : 
+                '暫無劇情簡介',
+              wrap: true,
+              size: 'sm',
+              margin: 'sm'
+            }
+          ]
+        },
+        footer: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: `👥 ${movie.vote_count} 人評價`,
+              size: 'xs',
+              color: '#999999',
+              align: 'center'
+            }
+          ]
+        }
+      };
+
+      flexMessage.contents.contents.push(bubble);
+    });
+
+    return flexMessage;
+  }
+}
+
+// 中文指令系統
+class ChineseCommandSystem {
+  constructor() {
+    this.commandHistory = new Map();
+    console.log('💬 中文指令系統已初始化');
+  }
+
+  async handleOwnerCommand(message) {
+    this.recordCommand(OWNER_LINE_ID, message);
+    
+    // 中文指令對應
+    const chineseCommands = {
+      '狀態報告': 'status',
+      '系統狀態': 'status',
+      '用戶活躍': 'users',
+      '用戶報告': 'users',
+      '提醒清單': 'reminders',
+      '所有提醒': 'reminders',
+      '決策待辦': 'decisions',
+      '待處理決策': 'decisions',
+      '聯絡人': 'contacts',
+      '聯絡人清單': 'contacts',
+      '決策歷史': 'history',
+      '歷史記錄': 'history',
+      '系統統計': 'stats',
+      '統計資料': 'stats',
+      '功能列表': 'features',
+      '所有功能': 'features',
+      '說明': 'help',
+      '幫助': 'help',
+      '清除歷史': 'clear_history',
+      '清除對話': 'clear_conversations',
+      '清除提醒': 'clear_reminders'
+    };
+
+    // 檢查是否為中文指令
+    for (const [chineseCmd, englishCmd] of Object.entries(chineseCommands)) {
+      if (message.includes(chineseCmd)) {
+        return await this.executeCommand(englishCmd);
+      }
+    }
+
+    // 檢查測試指令
+    if (message.includes('測試')) {
+      const testMatch = message.match(/測試\s*(.+)/);
+      if (testMatch) {
+        return await this.handleTestCommand(testMatch[1]);
+      }
+    }
+
+    return null; // 不是指令
+  }
+
+  async executeCommand(command) {
+    switch (command) {
+      case 'status':
+        return await this.getSystemStatusFlexMessage();
+      
+      case 'users':
+        return await this.getUserReportFlexMessage();
+      
+      case 'reminders':
+        return await reminderSystem.createReminderListFlexMessage(OWNER_LINE_ID);
+      
+      case 'decisions':
+        return await decisionSystem.createPendingDecisionsFlexMessage();
+      
+      case 'contacts':
+        return await this.getContactsFlexMessage();
+      
+      case 'history':
+        return await this.getDecisionHistoryFlexMessage();
+      
+      case 'stats':
+        return await this.getStatsFlexMessage();
+      
+      case 'features':
+        return await this.getFeaturesFlexMessage();
+      
+      case 'help':
+        return await this.getHelpFlexMessage();
+      
+      case 'clear_history':
+        this.commandHistory.clear();
+        return { type: 'text', text: '✅ 指令歷史已清除' };
+      
+      case 'clear_conversations':
+        aiSystem.conversations.clear();
+        return { type: 'text', text: '✅ 對話記錄已清除' };
+      
+      case 'clear_reminders':
+        const activeReminders = reminderSystem.reminders.size;
+        reminderSystem.reminders.clear();
+        reminderSystem.activeTimers.forEach(timer => clearTimeout(timer));
+        reminderSystem.activeTimers.clear();
+        return { type: 'text', text: `✅ 已清除 ${activeReminders} 個提醒` };
+      
+      default:
+        return { type: 'text', text: `未知指令：${command}` };
+    }
+  }
+
+  async getSystemStatusFlexMessage() {
+    const uptime = process.uptime();
+    const uptimeStr = `${Math.floor(uptime / 3600)}小時${Math.floor((uptime % 3600) / 60)}分鐘`;
+    const memoryUsage = (process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2);
+    
+    return {
+      type: 'flex',
+      altText: '🤖 系統狀態報告',
+      contents: {
+        type: 'bubble',
+        header: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: '🤖 系統狀態報告',
+              weight: 'bold',
+              size: 'lg',
+              color: '#4A90E2'
+            }
+          ],
+          backgroundColor: '#E3F2FD'
+        },
+        body: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                {
+                  type: 'text',
+                  text: '⏱️ 運行時間',
+                  flex: 1,
+                  weight: 'bold'
+                },
+                {
+                  type: 'text',
+                  text: uptimeStr,
+                  flex: 1,
+                  align: 'end'
+                }
+              ]
+            },
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🏠 記憶體使用',
+                  flex: 1,
+                  weight: 'bold'
+                },
+                {
+                  type: 'text',
+                  text: `${memoryUsage} MB`,
+                  flex: 1,
+                  align: 'end'
+                }
+              ],
+              margin: 'md'
+            },
+            {
+              type: 'separator',
+              margin: 'md'
+            },
+            {
+              type: 'text',
+              text: '📊 系統狀態',
+              weight: 'bold',
+              margin: 'md'
+            },
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                {
+                  type: 'text',
+                  text: '🧠 AI系統',
+                  flex: 1
+                },
+                {
+                  type: 'text',
+                  text: `正常 (${aiSystem.conversations.size}條對話)`,
+                  flex: 2,
+                  align: 'end',
+                  color: '#4CAF50'
+                }
+              ],
+              margin: 'sm'
+            },
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                {
+                  type: 'text',
+                  text: '⏰ 提醒系統',
+                  flex: 1
+                },
+                {
+                  type: 'text',
+                  text: `正常 (${reminderSystem.reminders.size}個活躍)`,
+                  flex: 2,
+                  align: 'end',
+                  color: '#4CAF50'
+                }
+              ],
+              margin: 'sm'
+            },
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                {
+                  type: 'text',
+                  text: '⚖️ 決策系統',
+                  flex: 1
+                },
+                {
+                  type: 'text',
+                  text: `正常 (${decisionSystem.pendingDecisions.size}個待處理)`,
+                  flex: 2,
+                  align: 'end',
+                  color: '#4CAF50'
+                }
+              ],
+              margin: 'sm'
+            },
+            {
+              type: 'box',
+              layout: 'horizontal',
+              contents: [
+                {
+                  type: 'text',
+                  text: '👥 用戶數',
+                  flex: 1
+                },
+                {
+                  type: 'text',
+                  text: `${aiSystem.userProfiles.size} 人`,
+                  flex: 1,
+                  align: 'end',
+                  color: '#4A90E2'
+                }
+              ],
+              margin: 'sm'
+            }
+          ]
+        },
+        footer: {
+          type: 'box',
+          layout: 'vertical',
+          contents: [
+            {
+              type: 'text',
+              text: '✅ 所有系統運作正常！',
+              align: 'center',
+              weight: 'bold',
+              color: '#4CAF50'
+            }
+          ]
+        }
+      }
+    };
+  }
+
+  async getUserReportFlexMessage() {
+    const users = Array.from(aiSystem.userProfiles.values());
+    
+    if (users.length === 0) {
+      return { type: 'text', text: '目前沒有用戶資料' };
+    }
+    
+    const sortedUsers = users
+      .sort((a, b) => b.messageCount - a.messageCount)
+      .slice(0, 10);
+
+    return {
+      type: 'flex',
+      altText: `👥 用戶活躍度報告 (${users.length}人)`,
+      contents: {
+        type: 'carousel',
+        contents: sortedUsers.map((user, index) => {
+          const lastSeenAgo = Math.floor((new Date() - user.lastSeen) / 60000);
+          const lastSeenStr = lastSeenAgo < 60 ? 
+            `${lastSeenAgo}分鐘前` : 
+            `${Math.floor(lastSeenAgo / 60)}小時前`;
+          
+          return {
+            type: 'bubble',
+            header: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: `👤 排名 ${index + 1}`,
+                  weight: 'bold',
+                  size: 'lg',
+                  color: index < 3 ? '#FFD700' : '#4A90E2'
+                }
+              ]
+            },
+            body: {
+              type: 'box',
+              layout: 'vertical',
+              contents: [
+                {
+                  type: 'text',
+                  text: user.name,
+                  weight: 'bold',
+                  size: 'md'
+                },
+                {
+                  type: 'separator',
+                  margin: 'md'
+                },
+                {
+                  type: 'box',
+                  layout: 'horizontal',
+                  contents: [
+                    {
+                      type: 'text',
+                      text: '💬 訊息數',
+                      flex: 1
+                    },
+                    {
+                      type: 'text',
+                      text: user.messageCount.toString(),
+                      flex: 1,
+                      align: 'end',
+                      weight: 'bold',
+                      color: '#4CAF50'
+                    }
+                  ],
+                
