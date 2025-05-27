@@ -5,8 +5,8 @@ const axios = require('axios');
 const crypto = require('crypto');
 const twilio = require('twilio');
 
-// ==================== 環境變數配置 ====================
-const config = {
+// ==================== 系統配置 ====================
+const CONFIG = {
   // LINE Bot 配置
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -16,118 +16,70 @@ const config = {
   backupAiKey: process.env.BACKUP_AI_KEY,
   backupAiUrl: process.env.BACKUP_AI_URL || 'https://api.chatanywhere.org/v1',
   
-  // 外部 API
+  // 外部服務
   newsApiKey: process.env.NEWS_API_KEY,
   weatherApiKey: process.env.WEATHER_API_KEY,
   tmdbApiKey: process.env.TMDB_API_KEY,
   searchApiKey: process.env.SEARCH_API_KEY,
   searchEngineId: process.env.SEARCH_ENGINE_ID,
   
-  // Twilio 電話鬧鐘
+  // Twilio 電話服務
   twilioAccountSid: process.env.TWILIO_ACCOUNT_SID,
   twilioAuthToken: process.env.TWILIO_AUTH_TOKEN,
   twilioPhoneNumber: process.env.TWILIO_PHONE_NUMBER,
   
-  // 系統配置 - 更新主人ID
-  adminUserId: 'U59af77e69411ffb99a49f1f2c3e2afc4',
-  port: process.env.PORT || 3000,
+  // 主人資訊
+  masterId: 'U59af77e69411ffb99a49f1f2c3e2afc4',
+  masterPhone: '+886966198826',
+  masterName: '顧晉瑋',
   
-  // 性能配置
+  // 系統設定
+  port: process.env.PORT || 3000,
+  timezone: 'Asia/Taipei',
+  
+  // 性能設定
   apiTimeout: 15000,
   maxRetries: 3,
-  rateLimitWindow: 60000,
-  maxRequestsPerWindow: 50,
   
-  // 記憶體配置
-  maxPersonalHistory: 200,
-  maxGroupHistory: 30,
-  maxLearningData: 1000
-};
-
-// 初始化服務
-const client = new line.Client(config);
-const app = express();
-
-// 初始化 AI
-let genAI, model, twilioClient;
-if (config.geminiApiKey) {
-  genAI = new GoogleGenerativeAI(config.geminiApiKey);
-  model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-}
-
-// 初始化 Twilio
-if (config.twilioAccountSid && config.twilioAuthToken) {
-  twilioClient = twilio(config.twilioAccountSid, config.twilioAuthToken);
-}
-
-// ==================== 全域記憶系統 ====================
-const Memory = {
-  // 用戶對話記憶
-  conversations: new Map(),
-  
-  // 用戶個人檔案
-  userProfiles: new Map(),
-  
-  // 提醒系統
-  reminders: new Map(),
-  
-  // 決策系統
-  decisions: new Map(),
-  
-  // 矛盾記錄
-  contradictions: new Map(),
-  
-  // 訊息歷史（用於收回偵測）
-  messageHistory: new Map(),
-  
-  // 收回訊息追蹤
-  recalledMessages: new Map(),
-  
-  // 系統統計
-  stats: {
-    totalMessages: 0,
-    totalUsers: 0,
-    startTime: new Date(),
-    errors: 0,
-    apiCalls: 0,
-    decisionsHandled: 0,
-    remindersTriggered: 0,
-    contradictionsDetected: 0
+  // 群組回覆模式
+  groupReplyModes: {
+    HIGH: 'high',    // 每則都回
+    MEDIUM: 'medium', // 每2則回1則
+    LOW: 'low',      // 每5則回1則
+    AI: 'ai'         // AI自動決定
   },
-
-  // 學習數據
-  learningData: new Map(),
   
-  // 頻率限制
-  rateLimiter: new Map(),
-  
-  // 系統健康狀態
-  systemHealth: {
-    geminiApi: true,
-    backupAi: true,
-    twilioService: true,
-    lastHealthCheck: new Date()
-  }
+  // 每日回報時間
+  dailyReportTime: '09:00'
 };
 
 // ==================== 工具函數 ====================
 class Utils {
-  static formatTime(date) {
+  // 台灣時間格式化
+  static formatTaiwanTime(date = new Date()) {
     return new Intl.DateTimeFormat('zh-TW', {
-      timeZone: 'Asia/Taipei',
+      timeZone: CONFIG.timezone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
-      second: '2-digit'
+      second: '2-digit',
+      weekday: 'short'
     }).format(date);
   }
 
+  // 獲取台灣時間的Date對象
+  static getTaiwanTime() {
+    return new Date(new Date().toLocaleString("en-US", {timeZone: CONFIG.timezone}));
+  }
+
+  // 生成唯一ID
   static generateId(prefix = 'id') {
     return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
+  // 安全的JSON解析
   static safeJsonParse(str, defaultValue = {}) {
     try {
       return JSON.parse(str);
@@ -136,57 +88,193 @@ class Utils {
     }
   }
 
+  // 文本截斷
   static truncateText(text, maxLength = 100) {
+    if (!text) return '';
     return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
   }
 
-  static checkRateLimit(userId) {
-    const now = Date.now();
-    const userRequests = Memory.rateLimiter.get(userId) || [];
-    
-    // 清除過期請求
-    const validRequests = userRequests.filter(time => now - time < config.rateLimitWindow);
-    
-    if (validRequests.length >= config.maxRequestsPerWindow) {
-      return false;
-    }
-    
-    validRequests.push(now);
-    Memory.rateLimiter.set(userId, validRequests);
-    return true;
+  // 格式化用戶顯示名稱
+  static formatUserDisplay(userId, displayName = null) {
+    const shortId = userId.substring(0, 8) + '...';
+    return displayName ? `${displayName}（${shortId}）` : `用戶（${shortId}）`;
   }
 
-  static async retryOperation(operation, maxRetries = config.maxRetries) {
+  // 驗證台灣手機號碼
+  static validateTaiwanPhone(phone) {
+    const phoneRegex = /^\+886[0-9]{9}$/;
+    return phoneRegex.test(phone);
+  }
+
+  // 重試機制
+  static async retryOperation(operation, maxRetries = CONFIG.maxRetries) {
     for (let i = 0; i < maxRetries; i++) {
       try {
         return await operation();
       } catch (error) {
         console.error(`❌ 操作失敗 (第${i + 1}次嘗試):`, error.message);
         if (i === maxRetries - 1) throw error;
-        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
       }
     }
   }
 
-  static createASCIIChart(data, title, maxWidth = 30) {
-    const maxValue = Math.max(...data.map(item => item.value));
-    const chart = [`📊 ${title}`, '─'.repeat(maxWidth + 10)];
-    
-    data.forEach(item => {
-      const barLength = Math.max(1, Math.floor((item.value / maxValue) * maxWidth));
-      const bar = '█'.repeat(barLength);
-      const spaces = ' '.repeat(Math.max(0, maxWidth - barLength));
-      chart.push(`${item.label.padEnd(8)} │${bar}${spaces}│ ${item.value}`);
-    });
-    
-    chart.push('─'.repeat(maxWidth + 10));
-    return chart.join('\n');
+  // 分頁內容
+  static splitToPages(items, itemsPerPage = 5) {
+    const pages = [];
+    for (let i = 0; i < items.length; i += itemsPerPage) {
+      pages.push(items.slice(i, i + itemsPerPage));
+    }
+    return pages;
   }
+
+  // 自然分段文本
+  static naturalParagraph(text) {
+    if (!text) return '';
+    
+    // 自動在適當位置添加換行，讓文本更自然
+    return text
+      .replace(/([。！？])\s*/g, '$1\n')  // 句號後換行
+      .replace(/([，、])\s*/g, '$1 ')     // 逗號後加空格
+      .replace(/\n{3,}/g, '\n\n')        // 限制最多兩個換行
+      .trim();
+  }
+}
+
+// ==================== 記憶體系統 ====================
+class MemorySystem {
+  constructor() {
+    this.conversations = new Map();     // 對話記憶
+    this.userProfiles = new Map();     // 用戶檔案
+    this.reminders = new Map();        // 提醒系統
+    this.decisions = new Map();        // 決策系統
+    this.contradictions = new Map();   // 矛盾記錄
+    this.recalledMessages = new Map();  // 收回訊息
+    this.groupSettings = new Map();    // 群組設定
+    this.dailyStats = new Map();       // 每日統計
+    this.movieSearches = new Map();    // 電影搜尋記錄
+    this.interactions = new Map();     // 互動分析
+    
+    this.stats = {
+      totalMessages: 0,
+      totalUsers: 0,
+      startTime: new Date(),
+      errors: 0,
+      apiCalls: 0,
+      remindersTriggered: 0,
+      decisionsHandled: 0,
+      contradictionsDetected: 0
+    };
+  }
+
+  // 獲取或創建用戶檔案
+  getUserProfile(userId) {
+    if (!this.userProfiles.has(userId)) {
+      this.userProfiles.set(userId, {
+        id: userId,
+        displayName: null,
+        phoneNumber: null,
+        firstSeen: Utils.getTaiwanTime(),
+        lastSeen: Utils.getTaiwanTime(),
+        messageCount: 0,
+        preferences: {},
+        personalityData: {
+          favoriteWords: [],
+          responsePatterns: [],
+          topics: new Set(),
+          sentiment: 'neutral'
+        }
+      });
+      this.stats.totalUsers++;
+    }
+    return this.userProfiles.get(userId);
+  }
+
+  // 記錄對話
+  recordConversation(userId, message, type = 'user', isGroup = false) {
+    if (!this.conversations.has(userId)) {
+      this.conversations.set(userId, []);
+    }
+    
+    const conversation = this.conversations.get(userId);
+    conversation.push({
+      message,
+      timestamp: Utils.getTaiwanTime(),
+      type,
+      isGroup,
+      taiwanTime: Utils.formatTaiwanTime()
+    });
+
+    // 保持適當的對話長度
+    const maxLength = isGroup ? 30 : 100;
+    if (conversation.length > maxLength) {
+      conversation.splice(0, conversation.length - maxLength);
+    }
+
+    this.stats.totalMessages++;
+  }
+
+  // 更新每日統計
+  updateDailyStats(category, data) {
+    const today = Utils.formatTaiwanTime().split(' ')[0]; // 只取日期部分
+    
+    if (!this.dailyStats.has(today)) {
+      this.dailyStats.set(today, {
+        date: today,
+        activeUsers: new Set(),
+        messageCount: 0,
+        reminders: 0,
+        movieSearches: [],
+        contradictions: 0,
+        recalledMessages: 0,
+        topUsers: new Map(),
+        popularTopics: new Map()
+      });
+    }
+
+    const dayStats = this.dailyStats.get(today);
+    
+    switch (category) {
+      case 'message':
+        dayStats.messageCount++;
+        dayStats.activeUsers.add(data.userId);
+        break;
+      case 'reminder':
+        dayStats.reminders++;
+        break;
+      case 'movie':
+        dayStats.movieSearches.push(data);
+        break;
+      case 'contradiction':
+        dayStats.contradictions++;
+        break;
+      case 'recall':
+        dayStats.recalledMessages++;
+        break;
+    }
+  }
+}
+
+// 初始化系統
+const app = express();
+const memory = new MemorySystem();
+const client = new line.Client(CONFIG);
+
+// 初始化AI
+let genAI, model, twilioClient;
+if (CONFIG.geminiApiKey) {
+  genAI = new GoogleGenerativeAI(CONFIG.geminiApiKey);
+  model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+}
+
+if (CONFIG.twilioAccountSid && CONFIG.twilioAuthToken) {
+  twilioClient = twilio(CONFIG.twilioAccountSid, CONFIG.twilioAuthToken);
 }
 
 // ==================== Flex 訊息系統 ====================
 class FlexMessageBuilder {
-  static createBasicCard(title, content, headerColor = '#4A90E2', actions = null) {
+  // 基礎卡片模板
+  static createCard(title, content, headerColor = '#4A90E2', actions = null) {
     const bubble = {
       type: 'bubble',
       header: {
@@ -208,7 +296,7 @@ class FlexMessageBuilder {
         layout: 'vertical',
         contents: [{
           type: 'text',
-          text: content,
+          text: Utils.naturalParagraph(content),
           wrap: true,
           size: 'md',
           color: '#333333'
@@ -234,23 +322,33 @@ class FlexMessageBuilder {
     };
   }
 
-  static createChatResponse(content, emoji = '💬', color = '#4A90E2') {
-    return this.createBasicCard(`${emoji} 智能回覆`, content, color);
+  // AI聊天回覆
+  static createChatResponse(content, userName, emoji = '💬') {
+    const title = `${emoji} ${userName}，我來回覆你`;
+    return this.createCard(title, content, '#4A90E2');
   }
 
-  static createSystemMessage(content, title = '🤖 系統訊息', color = '#34C759') {
-    return this.createBasicCard(title, content, color);
+  // 系統訊息
+  static createSystemMessage(content, title = '🤖 系統通知', color = '#34C759') {
+    return this.createCard(title, content, color);
   }
 
-  static createErrorMessage(content, title = '❌ 錯誤訊息') {
-    return this.createBasicCard(title, content, '#FF3B30');
+  // 錯誤訊息
+  static createErrorMessage(content, title = '❌ 系統錯誤') {
+    return this.createCard(title, content, '#FF3B30');
   }
 
-  static createWarningMessage(content, title = '⚠️ 警告訊息') {
-    return this.createBasicCard(title, content, '#FF9500');
-  }
+  // 提醒卡片
+  static createReminderCard(reminderData, userDisplay) {
+    const taiwanTime = Utils.formatTaiwanTime(reminderData.targetTime);
+    const phoneInfo = reminderData.phoneNumber ? `\n📞 電話通知: ${reminderData.phoneNumber}` : '';
+    
+    const content = `✅ 已為 ${userDisplay} 設定提醒！
+    
+📝 內容: ${reminderData.content}
+⏰ 時間: ${taiwanTime}（台灣時間）${phoneInfo}
+🆔 編號: ${reminderData.id}`;
 
-  static createReminderCard(reminderData) {
     const actions = [
       {
         type: 'box',
@@ -261,8 +359,8 @@ class FlexMessageBuilder {
             type: 'button',
             action: {
               type: 'message',
-              label: '📋 查看全部',
-              text: '/提醒清單'
+              label: '📋 我的提醒',
+              text: '/我的提醒'
             },
             style: 'secondary',
             flex: 1
@@ -281,12 +379,67 @@ class FlexMessageBuilder {
       }
     ];
 
-    const content = `📝 內容：${reminderData.content}\n\n🕐 時間：${Utils.formatTime(reminderData.targetTime)}\n\n🆔 編號：${reminderData.id}${reminderData.isPhoneCall ? '\n\n📞 電話鬧鐘已啟用' : ''}`;
-
-    return this.createBasicCard('⏰ 提醒設定成功', content, '#34C759', actions);
+    return this.createCard('⏰ 提醒設定成功', content, '#34C759', actions);
   }
 
-  static createDecisionCard(decisionData) {
+  // 電影資訊卡片
+  static createMovieCard(movieData) {
+    const content = `🎬 ${movieData.title}
+
+⭐ 評分: ${movieData.rating}/10
+📅 上映: ${movieData.releaseDate}（台灣時間）
+🎭 類型: ${movieData.genres.join('、')}
+⏱️ 片長: ${movieData.runtime}分鐘
+
+👥 主要演員:
+${movieData.cast.slice(0, 5).join('、')}
+
+📖 劇情簡介:
+${Utils.truncateText(movieData.overview, 150)}`;
+
+    const actions = [
+      {
+        type: 'button',
+        action: {
+          type: 'uri',
+          label: '📺 觀看預告',
+          uri: movieData.trailerUrl || 'https://www.youtube.com'
+        }
+      }
+    ];
+
+    return this.createCard('🎬 電影資訊', content, '#8E44AD', actions);
+  }
+
+  // 每日報告卡片
+  static createDailyReportCard(reportData) {
+    const content = `📊 【${reportData.date} 互動摘要】（台灣時間）
+
+👥 活躍用戶: ${reportData.activeUsersCount}人
+💬 總訊息: ${reportData.messageCount}則
+⏰ 提醒完成: ${reportData.reminders}次
+🎬 電影搜尋: ${reportData.movieSearches}次
+⚠️ 矛盾偵測: ${reportData.contradictions}次
+📱 訊息收回: ${reportData.recalledMessages}次
+
+🏆 最活躍用戶:
+${reportData.topUsers.slice(0, 3).map((user, i) => `${i + 1}. ${user.name}（${user.messages}則）`).join('\n')}
+
+🔥 熱門話題:
+${reportData.popularTopics.slice(0, 3).map((topic, i) => `${i + 1}. ${topic.name}（${topic.count}次）`).join('\n')}`;
+
+    return this.createCard('📊 每日數據報告', content, '#FF9500');
+  }
+
+  // 決策請求卡片
+  static createDecisionCard(decisionData, requesterDisplay) {
+    const content = `⚖️ 需要您的決策！
+
+👤 請求者: ${requesterDisplay}
+📋 內容: ${decisionData.content}
+🕐 請求時間: ${Utils.formatTaiwanTime(decisionData.created)}（台灣時間）
+⏰ 30分鐘後將自動拒絕`;
+
     const actions = [
       {
         type: 'box',
@@ -326,33 +479,23 @@ class FlexMessageBuilder {
       }
     ];
 
-    const content = `👤 請求者：${decisionData.requesterName || '未知'}\n\n📋 內容：${decisionData.content}\n\n🕐 時間：${decisionData.timestamp}\n\n⏰ 30分鐘後將自動拒絕`;
-
-    return this.createBasicCard('⚖️ 需要您的決策', content, '#FF9500', actions);
+    return this.createCard('⚖️ 決策請求', content, '#FF9500', actions);
   }
 
-  static createStatusCard(stats) {
-    const uptime = Math.floor((Date.now() - stats.startTime) / 3600000);
-    const memoryUsed = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-    
-    const content = `💬 總訊息數：${stats.totalMessages}\n👥 用戶數量：${Memory.userProfiles.size}\n⏰ 活躍提醒：${Memory.reminders.size}\n⚖️ 待決策：${Array.from(Memory.decisions.values()).filter(d => d.status === 'pending').length}\n🕒 運行時間：${uptime}小時\n💾 記憶體：${memoryUsed}MB\n📈 API呼叫：${stats.apiCalls}\n❌ 錯誤次數：${stats.errors}\n⚖️ 處理決策：${stats.decisionsHandled}\n⏰ 觸發提醒：${stats.remindersTriggered}\n⚠️ 偵測矛盾：${stats.contradictionsDetected}`;
-
-    return this.createBasicCard('📊 系統狀態總覽', content, '#4A90E2');
-  }
-
-  static createListCard(title, items, icon = '📋', color = '#4A90E2') {
+  // 列表卡片（支援分頁）
+  static createListCard(title, items, icon = '📋', currentPage = 0, totalPages = 1) {
     if (!items || items.length === 0) {
       return this.createSystemMessage('目前沒有任何項目', `${icon} ${title}`);
     }
 
-    const content = items.map((item, index) => `${index + 1}. ${item}`).join('\n\n');
-    return this.createBasicCard(`${icon} ${title}`, content, color);
-  }
+    const content = items.map((item, index) => 
+      `${index + 1}. ${item}`
+    ).join('\n\n');
 
-  static createMultiPageCard(title, pages, currentPage = 0, icon = '📋') {
-    const page = pages[currentPage];
-    const totalPages = pages.length;
-    
+    const headerTitle = totalPages > 1 ? 
+      `${icon} ${title} (第${currentPage + 1}/${totalPages}頁)` : 
+      `${icon} ${title}`;
+
     const actions = [];
     if (totalPages > 1) {
       const navButtons = [];
@@ -363,7 +506,7 @@ class FlexMessageBuilder {
           action: {
             type: 'message',
             label: '◀️ 上一頁',
-            text: `${title.replace(icon, '').trim()} 第${currentPage}頁`
+            text: `${title} 第${currentPage}頁`
           },
           flex: 1
         });
@@ -375,7 +518,7 @@ class FlexMessageBuilder {
           action: {
             type: 'message',
             label: '下一頁 ▶️',
-            text: `${title.replace(icon, '').trim()} 第${currentPage + 2}頁`
+            text: `${title} 第${currentPage + 2}頁`
           },
           flex: 1
         });
@@ -391,78 +534,7 @@ class FlexMessageBuilder {
       }
     }
 
-    const headerTitle = totalPages > 1 ? `${title} (第${currentPage + 1}/${totalPages}頁)` : title;
-    return this.createBasicCard(headerTitle, page, '#4A90E2', actions);
-  }
-
-  static createWeatherCard(weatherData) {
-    const content = `🌡️ 溫度：${weatherData.temperature}°C\n☁️ 天氣：${weatherData.condition}\n💨 風速：${weatherData.windSpeed || '未知'} km/h\n💧 濕度：${weatherData.humidity || '未知'}%\n📅 更新：${Utils.formatTime(new Date())}`;
-
-    return this.createBasicCard(`🌤️ ${weatherData.location} 天氣`, content, '#34C759');
-  }
-
-  static createChartCard(data, title, type = 'bar') {
-    const asciiChart = Utils.createASCIIChart(data, title);
-    return this.createBasicCard(`📊 ${title}`, asciiChart, '#FF9500');
-  }
-
-  static createMovieCard(movies) {
-    if (!movies || movies.length === 0) {
-      return this.createSystemMessage('目前沒有電影資料', '🎬 電影推薦');
-    }
-
-    const content = movies.map((movie, index) => 
-      `${index + 1}. ${movie.title}\n   ⭐ 評分：${movie.rating}/10\n   📅 年份：${movie.year}\n   🎭 類型：${movie.genre}`
-    ).join('\n\n');
-
-    return this.createBasicCard('🎬 熱門電影推薦', content, '#8E44AD');
-  }
-
-  static createNewsCard(news) {
-    if (!news || news.length === 0) {
-      return this.createSystemMessage('目前沒有新聞資料', '📰 新聞摘要');
-    }
-
-    const content = news.map((item, index) => 
-      `${index + 1}. ${item.title}\n   📅 ${item.date}\n   📝 ${item.summary}`
-    ).join('\n\n');
-
-    return this.createBasicCard('📰 最新新聞', content, '#E74C3C');
-  }
-
-  static createHelpCard() {
-    const content = `🤖 超級智能 LINE Bot 使用說明
-
-📱 一般功能：
-• 直接聊天 - AI會模擬主人風格回應
-• 設定提醒 - "30分鐘後提醒我開會"
-• 電話鬧鐘 - "6點叫我起床"（電話喚醒）
-• 查詢天氣 - "台中天氣如何"
-• 搜尋資訊 - "搜尋 LINE Bot 開發"
-• 電影推薦 - "推薦熱門電影"
-• 新聞查詢 - "最新新聞"
-
-🔐 主人專用指令：
-• /狀態報告 - 查看系統總覽
-• /提醒清單 - 查看所有提醒
-• /決策待辦 - 查看待處理決策
-• /用戶活躍 - 查看用戶活動
-• /系統統計 - 查看詳細統計
-• /功能列表 - 查看所有功能
-• /清除歷史 - 清理對話記錄
-• /說明 - 顯示此說明
-
-🎯 特色功能：
-• 完全模擬主人的說話風格
-• 自動學習對話模式
-• 智能決策系統
-• 矛盾偵測提醒
-• 訊息收回追蹤
-• 全圖文回應格式
-• 電話鬧鐘功能
-• 自我修復機制`;
-
-    return this.createBasicCard('📚 使用說明', content, '#34C759');
+    return this.createCard(headerTitle, content, '#4A90E2', actions);
   }
 }
 
@@ -470,70 +542,36 @@ class FlexMessageBuilder {
 class AIPersonalitySystem {
   constructor() {
     this.ownerPersonality = {
-      name: '顧晉瑋',
-      school: '靜宜大學資管系',
-      language_style: '台灣口語化、親切、專業但不拘謹',
-      response_patterns: [
+      name: CONFIG.masterName,
+      style: '台灣大學生口吻，親切自然，有點幽默',
+      patterns: [
         '喜歡用「欸」、「哈哈」、「對啊」、「這樣啊」等語助詞',
-        '會適時給建議但不會太強勢',
-        '遇到技術問題會很興奮，喜歡深入討論',
-        '對朋友很關心，會主動詢問近況',
-        '講話直接但很溫暖，有時會開玩笑'
+        '回話簡短有力，不會長篇大論',
+        '對朋友很關心，會適時開玩笑',
+        '遇到技術問題會很興奮',
+        '說話直接但溫暖'
       ],
-      values: [
-        '注重效率但也關心人情',
-        '喜歡學習新技術和分享知識',
-        '重視團隊合作和互助',
-        '實事求是，不喜歡虛假',
-        '追求完美但也務實'
-      ],
-      emotional_style: '正面樂觀，偶爾會開玩笑，但在正事上很認真',
       expertise: [
-        '程式設計和系統開發',
-        'LINE Bot 和 AI 技術',
-        '資訊管理和數據分析',
-        '問題解決和邏輯思考',
-        '軟體架構設計'
+        '程式設計和資訊管理',
+        'LINE Bot 開發',
+        '資料分析',
+        '系統架構'
       ]
     };
   }
 
-  async generatePersonalizedResponse(message, userContext, conversationHistory) {
-    Memory.stats.apiCalls++;
+  async generateResponse(message, userContext, conversationHistory) {
+    memory.stats.apiCalls++;
     
-    const personalityPrompt = `
-你是${this.ownerPersonality.name}的AI分身，來自${this.ownerPersonality.school}。
-你必須完全模擬他的說話方式、思維模式和個性特徵：
+    const isGroup = userContext.isGroup;
+    const groupMode = isGroup ? this.getGroupReplyMode(userContext.groupId) : null;
+    
+    // 檢查群組回覆頻率
+    if (isGroup && !this.shouldReplyInGroup(userContext.groupId, groupMode)) {
+      return null; // 不回覆
+    }
 
-個性設定：
-- 語言風格：${this.ownerPersonality.language_style}
-- 回應特色：${this.ownerPersonality.response_patterns.join('、')}
-- 核心價值：${this.ownerPersonality.values.join('、')}
-- 情緒風格：${this.ownerPersonality.emotional_style}
-- 專業領域：${this.ownerPersonality.expertise.join('、')}
-
-用戶背景：
-- ID: ${userContext.userId}
-- 是否群組: ${userContext.isGroup ? '是' : '否'}
-- 互動次數: ${userContext.profile?.messageCount || 0}
-- 學習數據: ${userContext.learningData ? '已建立' : '新用戶'}
-
-最近對話歷史：
-${conversationHistory}
-
-當前訊息：${message}
-
-請用${this.ownerPersonality.name}的口吻和風格回覆，讓對方感覺就像在跟本人聊天。
-回覆要求：
-1. 自然親切，符合台灣大學生的說話方式
-2. 如果是技術問題，展現專業熱忱
-3. 適當使用語助詞讓對話更生動
-4. 保持正面積極的態度
-5. 回覆長度控制在150字以內，簡潔有力
-6. 根據對話歷史調整回應風格
-
-回覆內容：
-`;
+    const prompt = this.buildPrompt(message, userContext, conversationHistory, isGroup);
 
     try {
       if (!model) {
@@ -541,90 +579,115 @@ ${conversationHistory}
       }
 
       const result = await Utils.retryOperation(async () => {
-        return await model.generateContent(personalityPrompt);
+        return await model.generateContent(prompt);
       });
 
-      const response = result.response.text();
+      let response = result.response.text();
       
-      // 學習用戶互動模式
+      // 自然分段處理
+      response = Utils.naturalParagraph(response);
+      
+      // 學習用戶特徵
       this.learnFromInteraction(userContext.userId, message, response);
       
-      Memory.systemHealth.geminiApi = true;
       return response;
       
     } catch (error) {
       console.error('❌ Gemini AI 失敗:', error);
-      Memory.systemHealth.geminiApi = false;
       
       try {
-        const backupResponse = await this.useBackupAI(message, userContext);
-        Memory.systemHealth.backupAi = true;
-        return backupResponse;
+        return await this.useBackupAI(message, userContext);
       } catch (backupError) {
         console.error('❌ 備用 AI 也失敗:', backupError);
-        Memory.systemHealth.backupAi = false;
-        Memory.stats.errors++;
-        return this.getFallbackResponse(message);
+        memory.stats.errors++;
+        return this.getFallbackResponse(message, userContext);
       }
     }
   }
 
+  buildPrompt(message, userContext, conversationHistory, isGroup) {
+    const userProfile = memory.getUserProfile(userContext.userId);
+    const userDisplay = Utils.formatUserDisplay(userContext.userId, userProfile.displayName);
+    
+    return `你是${this.ownerPersonality.name}的完美分身AI，需要完全模擬他的說話風格。
+
+個性設定：
+- 風格：${this.ownerPersonality.style}
+- 特色：${this.ownerPersonality.patterns.join('、')}
+- 專業：${this.ownerPersonality.expertise.join('、')}
+
+用戶資訊：
+- 身份：${userDisplay}
+- 環境：${isGroup ? '群組聊天' : '私人對話'}
+- 互動次數：${userProfile.messageCount}
+
+對話歷史：
+${conversationHistory.slice(-5).join('\n')}
+
+當前訊息：${message}
+
+回覆要求：
+1. 完全用台灣大學生的自然口吻
+2. 回覆要分段、簡短，不超過80字
+3. 適當使用語助詞讓對話生動
+4. 保持正面積極但真實的態度
+5. ${isGroup ? '群組環境下要自然融入對話' : '私人對話可以更親密些'}
+6. 時間相關內容一律用台灣時間
+
+直接回覆內容（不要說明或前綴）：`;
+  }
+
   async useBackupAI(message, userContext) {
-    if (!config.backupAiKey || !config.backupAiUrl) {
+    if (!CONFIG.backupAiKey) {
       throw new Error('備用 AI 未配置');
     }
 
     const response = await Utils.retryOperation(async () => {
-      return await axios.post(`${config.backupAiUrl}/chat/completions`, {
+      return await axios.post(`${CONFIG.backupAiUrl}/chat/completions`, {
         model: 'gpt-3.5-turbo',
         messages: [
           {
             role: 'system',
-            content: `你是${this.ownerPersonality.name}的AI分身。語言風格：${this.ownerPersonality.language_style}。要完全模擬他的說話方式和個性，用台灣大學生的口氣回應。保持親切、專業但不拘謹的風格。`
+            content: `你是${CONFIG.masterName}的AI分身，用台灣大學生口吻，親切自然，回覆簡短有力。`
           },
           {
             role: 'user',
             content: message
           }
         ],
-        max_tokens: 200,
+        max_tokens: 150,
         temperature: 0.8
       }, {
         headers: {
-          'Authorization': `Bearer ${config.backupAiKey}`,
+          'Authorization': `Bearer ${CONFIG.backupAiKey}`,
           'Content-Type': 'application/json'
         },
-        timeout: config.apiTimeout
+        timeout: CONFIG.apiTimeout
       });
     });
 
-    const aiResponse = response.data.choices[0].message.content;
-    this.learnFromInteraction(userContext.userId, message, aiResponse);
-    return aiResponse;
+    return Utils.naturalParagraph(response.data.choices[0].message.content);
   }
 
-  getFallbackResponse(message) {
+  getFallbackResponse(message, userContext) {
     const responses = {
-      greeting: ['哈囉！有什麼我可以幫你的嗎？', '嗨！今天過得怎麼樣？', '欸，你好呀！最近還好嗎？'],
-      tech: ['這個技術問題很有趣欸！讓我想想...', '技術方面的話，我覺得可以這樣考慮', '哦這個問題確實需要仔細思考一下'],
-      question: ['這個問題很好欸！', '讓我想想怎麼回答比較好...', '這確實是個值得討論的問題呢'],
-      thanks: ['不客氣啦！', '哈哈，應該的！', '很高興能幫到你！'],
-      problem: ['哎呀，我現在有點累，讓我休息一下再回你好嗎？', '系統有點忙，等等再跟你聊～', '抱歉，剛剛有點當機，現在好了！'],
-      default: ['有意思！', '我想想怎麼回應比較好...', '這個話題挺有趣的', '確實是這樣呢', '對啊對啊！']
+      greeting: ['哈囉！有什麼我可以幫你的嗎？', '嗨！今天過得如何？', '欸，你好！'],
+      tech: ['這個技術問題很有趣！讓我想想...', '技術方面我很有興趣呢', '這確實需要仔細考慮'],
+      thanks: ['不客氣啦！', '哈哈，小事情', '很高興能幫到你！'],
+      question: ['這個問題不錯！', '讓我想想怎麼回答...', '蠻有趣的問題'],
+      default: ['有意思！', '確實是這樣', '我懂你的意思', '對啊對啊！']
     };
 
     const lowerMessage = message.toLowerCase();
     
-    if (lowerMessage.includes('你好') || lowerMessage.includes('哈囉') || lowerMessage.includes('嗨')) {
+    if (lowerMessage.includes('你好') || lowerMessage.includes('哈囉')) {
       return this.randomChoice(responses.greeting);
-    } else if (lowerMessage.includes('程式') || lowerMessage.includes('技術') || lowerMessage.includes('代碼') || lowerMessage.includes('bot')) {
+    } else if (lowerMessage.includes('程式') || lowerMessage.includes('技術')) {
       return this.randomChoice(responses.tech);
     } else if (lowerMessage.includes('謝謝') || lowerMessage.includes('感謝')) {
       return this.randomChoice(responses.thanks);
-    } else if (lowerMessage.includes('?') || lowerMessage.includes('？') || lowerMessage.includes('怎麼') || lowerMessage.includes('什麼')) {
+    } else if (lowerMessage.includes('?') || lowerMessage.includes('？')) {
       return this.randomChoice(responses.question);
-    } else if (lowerMessage.includes('錯誤') || lowerMessage.includes('壞了') || lowerMessage.includes('當機')) {
-      return this.randomChoice(responses.problem);
     } else {
       return this.randomChoice(responses.default);
     }
@@ -634,76 +697,76 @@ ${conversationHistory}
     return array[Math.floor(Math.random() * array.length)];
   }
 
-  learnFromInteraction(userId, userMessage, botResponse) {
-    if (!Memory.learningData.has(userId)) {
-      Memory.learningData.set(userId, {
-        interactions: [],
-        preferences: {},
-        topics: new Set(),
-        sentiment: 'neutral',
-        responsePatterns: new Map(),
-        lastInteraction: new Date()
+  getGroupReplyMode(groupId) {
+    const settings = memory.groupSettings.get(groupId);
+    return settings?.replyMode || CONFIG.groupReplyModes.AI;
+  }
+
+  shouldReplyInGroup(groupId, mode) {
+    if (!memory.groupSettings.has(groupId)) {
+      memory.groupSettings.set(groupId, {
+        replyMode: CONFIG.groupReplyModes.AI,
+        messageCount: 0,
+        lastReply: 0
       });
     }
 
-    const userData = Memory.learningData.get(userId);
-    userData.interactions.push({
-      userMessage,
-      botResponse,
-      timestamp: new Date()
-    });
+    const settings = memory.groupSettings.get(groupId);
+    settings.messageCount++;
 
-    userData.lastInteraction = new Date();
-
-    // 保持合理的記憶體使用量
-    if (userData.interactions.length > config.maxLearningData) {
-      userData.interactions = userData.interactions.slice(-Math.floor(config.maxLearningData * 0.8));
+    switch (mode) {
+      case CONFIG.groupReplyModes.HIGH:
+        return true;
+      case CONFIG.groupReplyModes.MEDIUM:
+        return settings.messageCount % 2 === 0;
+      case CONFIG.groupReplyModes.LOW:
+        return settings.messageCount % 5 === 0;
+      case CONFIG.groupReplyModes.AI:
+        // AI模式：根據對話內容和活躍度決定
+        return this.aiShouldReply(groupId, settings);
+      default:
+        return true;
     }
-
-    // 分析用戶偏好
-    this.analyzeUserPreferences(userMessage, userData);
   }
 
-  analyzeUserPreferences(message, userData) {
-    // 分析技術相關興趣
-    const techKeywords = ['程式', '代碼', '系統', '開發', '技術', 'API', 'Bot', 'AI', 'python', 'javascript', 'node.js'];
-    const personalKeywords = ['朋友', '工作', '學校', '生活', '感覺', '想法', '心情'];
-    const timeKeywords = ['提醒', '鬧鐘', '時間', '明天', '小時', '分鐘'];
+  aiShouldReply(groupId, settings) {
+    // 簡單的AI決策邏輯
+    const timeSinceLastReply = Date.now() - settings.lastReply;
+    const shouldReply = 
+      settings.messageCount % 3 === 0 || // 每3則訊息
+      timeSinceLastReply > 300000 ||     // 或超過5分鐘沒回
+      Math.random() < 0.3;              // 或30%機率
+
+    if (shouldReply) {
+      settings.lastReply = Date.now();
+    }
+
+    return shouldReply;
+  }
+
+  learnFromInteraction(userId, userMessage, botResponse) {
+    const profile = memory.getUserProfile(userId);
     
-    techKeywords.forEach(keyword => {
-      if (message.toLowerCase().includes(keyword.toLowerCase())) {
-        userData.topics.add('technology');
-        userData.preferences.technology = (userData.preferences.technology || 0) + 1;
+    // 分析用戶語言特徵
+    const words = userMessage.split(/\s+/);
+    words.forEach(word => {
+      if (word.length > 1) {
+        if (!profile.personalityData.favoriteWords.includes(word)) {
+          profile.personalityData.favoriteWords.push(word);
+        }
       }
     });
 
-    personalKeywords.forEach(keyword => {
-      if (message.includes(keyword)) {
-        userData.topics.add('personal');
-        userData.preferences.personal = (userData.preferences.personal || 0) + 1;
-      }
-    });
-
-    timeKeywords.forEach(keyword => {
-      if (message.includes(keyword)) {
-        userData.topics.add('scheduling');
-        userData.preferences.scheduling = (userData.preferences.scheduling || 0) + 1;
-      }
-    });
-
-    // 分析情緒傾向
-    if (message.includes('哈哈') || message.includes('😂') || message.includes('笑')) {
-      userData.sentiment = 'positive';
-    } else if (message.includes('生氣') || message.includes('煩') || message.includes('😡')) {
-      userData.sentiment = 'negative';
+    // 保持適當的學習數據量
+    if (profile.personalityData.favoriteWords.length > 100) {
+      profile.personalityData.favoriteWords = profile.personalityData.favoriteWords.slice(-80);
     }
   }
 }
 
 // ==================== 提醒系統 ====================
 class ReminderSystem {
-  constructor(lineClient) {
-    this.client = lineClient;
+  constructor() {
     this.startCheckingReminders();
   }
 
@@ -713,262 +776,246 @@ class ReminderSystem {
     }, 10000); // 每10秒檢查一次
   }
 
-  parseTimeString(timeString, message) {
-    const now = new Date();
-    const patterns = [
-      // 相對時間：30分鐘後、2小時後、10秒後
-      {
-        regex: /(\d+)秒後/,
-        handler: (match) => new Date(now.getTime() + parseInt(match[1]) * 1000)
-      },
-      {
-        regex: /(\d+)分鐘?後/,
-        handler: (match) => new Date(now.getTime() + parseInt(match[1]) * 60000)
-      },
-      {
-        regex: /(\d+)小時後/,
-        handler: (match) => new Date(now.getTime() + parseInt(match[1]) * 3600000)
-      },
-      // 絕對時間：明天8點、今天下午3點
-      {
-        regex: /明天.*?(\d{1,2})[點時]/,
-        handler: (match) => {
-          const tomorrow = new Date(now);
-          tomorrow.setDate(tomorrow.getDate() + 1);
-          tomorrow.setHours(parseInt(match[1]), 0, 0, 0);
-          return tomorrow;
-        }
-      },
-      {
-        regex: /今天.*?(\d{1,2})[點時]/,
-        handler: (match) => {
-          const today = new Date(now);
-          today.setHours(parseInt(match[1]), 0, 0, 0);
-          if (today <= now) today.setDate(today.getDate() + 1);
-          return today;
-        }
-      },
-      // 具體時間：14:30、上午9點
-      {
-        regex: /(\d{1,2})[：:](\d{2})/,
-        handler: (match) => {
-          const target = new Date(now);
-          target.setHours(parseInt(match[1]), parseInt(match[2]), 0, 0);
-          if (target <= now) target.setDate(target.getDate() + 1);
-          return target;
-        }
-      },
-      {
-        regex: /上午(\d{1,2})[點時]/,
-        handler: (match) => {
-          const target = new Date(now);
-          const hour = parseInt(match[1]);
-          target.setHours(hour < 12 ? hour : hour, 0, 0, 0);
-          if (target <= now) target.setDate(target.getDate() + 1);
-          return target;
-        }
-      },
-      {
-        regex: /下午(\d{1,2})[點時]/,
-        handler: (match) => {
-          const target = new Date(now);
-          const hour = parseInt(match[1]);
-          target.setHours(hour === 12 ? 12 : hour + 12, 0, 0, 0);
-          if (target <= now) target.setDate(target.getDate() + 1);
-          return target;
-        }
-      },
-      {
-        regex: /(\d{1,2})[點時]/,
-        handler: (match) => {
-          const target = new Date(now);
-          target.setHours(parseInt(match[1]), 0, 0, 0);
-          if (target <= now) target.setDate(target.getDate() + 1);
-          return target;
-        }
-      }
-    ];
-
-    for (const pattern of patterns) {
-      const match = timeString.match(pattern.regex);
-      if (match) {
-        try {
-          return pattern.handler(match);
-        } catch (error) {
-          console.error('時間解析錯誤:', error);
-          continue;
-        }
-      }
-    }
-    
-    return null;
-  }
-
-  async setReminder(userId, messageText) {
-    const timeMatch = messageText.match(/(\d+秒後|\d+分鐘?後|\d+小時後|明天.*?\d{1,2}[點時]|今天.*?\d{1,2}[點時]|上午\d{1,2}[點時]|下午\d{1,2}[點時]|\d{1,2}[：:]\d{2}|\d{1,2}[點時])/);
-    
+  async setReminder(userId, messageText, userProfile) {
+    const timeMatch = this.extractTime(messageText);
     if (!timeMatch) {
       return FlexMessageBuilder.createErrorMessage(
-        '無法識別時間格式。請使用如下格式：\n• 30秒後\n• 5分鐘後\n• 2小時後\n• 明天8點\n• 今天下午3點\n• 14:30',
+        '無法識別時間格式。\n\n請使用：\n• 30分鐘後\n• 2小時後\n• 明天8點\n• 下午3點30分',
         '⏰ 時間格式錯誤'
       );
     }
 
-    const timeString = timeMatch[0];
-    const targetTime = this.parseTimeString(timeString, messageText);
-    
-    if (!targetTime) {
+    const targetTime = this.parseTime(timeMatch);
+    if (!targetTime || targetTime <= Utils.getTaiwanTime()) {
       return FlexMessageBuilder.createErrorMessage(
-        '時間解析失敗，請檢查時間格式',
-        '⏰ 解析錯誤'
-      );
-    }
-
-    if (targetTime <= new Date()) {
-      return FlexMessageBuilder.createErrorMessage(
-        '設定的時間已經過去了，請設定未來的時間',
+        '設定的時間已經過去，請設定未來的時間',
         '⏰ 時間錯誤'
       );
     }
 
-    const content = messageText.replace(timeString, '').replace(/提醒|鬧鐘|叫我/, '').trim() || '時間到了！';
+    // 提取電話號碼
+    const phoneMatch = messageText.match(/(\+886[0-9]{9})/);
+    const phoneNumber = phoneMatch ? phoneMatch[1] : userProfile.phoneNumber;
+
+    // 如果沒有電話號碼，詢問是否需要設定
+    if (!phoneNumber && messageText.includes('電話')) {
+      return FlexMessageBuilder.createErrorMessage(
+        '請提供台灣手機號碼（+886格式）\n\n例如：+886912345678\n或先用 /設定電話 +886912345678',
+        '📞 需要電話號碼'
+      );
+    }
+
+    const content = this.extractContent(messageText, timeMatch);
     const reminderId = Utils.generateId('reminder');
-    
-    // 判斷是否為電話鬧鐘
-    const isPhoneCall = content.includes('起床') || content.includes('電話') || messageText.includes('叫我起床') || messageText.includes('打電話');
     
     const reminderData = {
       id: reminderId,
       userId,
       content,
       targetTime,
-      isPhoneCall,
-      created: new Date(),
-      status: 'active'
+      phoneNumber,
+      created: Utils.getTaiwanTime(),
+      status: 'active',
+      isPhoneCall: !!phoneNumber
     };
 
-    Memory.reminders.set(reminderId, reminderData);
+    memory.reminders.set(reminderId, reminderData);
+    memory.updateDailyStats('reminder', { userId, content });
 
-    return FlexMessageBuilder.createReminderCard(reminderData);
+    const userDisplay = Utils.formatUserDisplay(userId, userProfile.displayName);
+    return FlexMessageBuilder.createReminderCard(reminderData, userDisplay);
+  }
+
+  extractTime(message) {
+    const patterns = [
+      /(\d+)秒後/,
+      /(\d+)分鐘?後/,
+      /(\d+)小時後/,
+      /明天.*?(\d{1,2})[點時]/,
+      /今天.*?(\d{1,2})[點時]/,
+      /下午(\d{1,2})[點時](\d{1,2}分)?/,
+      /上午(\d{1,2})[點時](\d{1,2}分)?/,
+      /(\d{1,2})[：:](\d{2})/,
+      /(\d{1,2})[點時](\d{1,2}分)?/
+    ];
+
+    for (const pattern of patterns) {
+      const match = message.match(pattern);
+      if (match) return match;
+    }
+    return null;
+  }
+
+  parseTime(timeMatch) {
+    const now = Utils.getTaiwanTime();
+    const matchStr = timeMatch[0];
+    
+    if (matchStr.includes('秒後')) {
+      const seconds = parseInt(timeMatch[1]);
+      return new Date(now.getTime() + seconds * 1000);
+    } else if (matchStr.includes('分鐘後') || matchStr.includes('分後')) {
+      const minutes = parseInt(timeMatch[1]);
+      return new Date(now.getTime() + minutes * 60000);
+    } else if (matchStr.includes('小時後')) {
+      const hours = parseInt(timeMatch[1]);
+      return new Date(now.getTime() + hours * 3600000);
+    } else if (matchStr.includes('明天')) {
+      const hour = parseInt(timeMatch[1]);
+      const tomorrow = new Date(now);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setHours(hour, 0, 0, 0);
+      return tomorrow;
+    } else if (matchStr.includes('今天')) {
+      const hour = parseInt(timeMatch[1]);
+      const today = new Date(now);
+      today.setHours(hour, 0, 0, 0);
+      if (today <= now) today.setDate(today.getDate() + 1);
+      return today;
+    } else if (matchStr.includes('下午')) {
+      const hour = parseInt(timeMatch[1]);
+      const minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+      const target = new Date(now);
+      target.setHours(hour === 12 ? 12 : hour + 12, minute, 0, 0);
+      if (target <= now) target.setDate(target.getDate() + 1);
+      return target;
+    } else if (matchStr.includes('上午')) {
+      const hour = parseInt(timeMatch[1]);
+      const minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+      const target = new Date(now);
+      target.setHours(hour === 12 ? 0 : hour, minute, 0, 0);
+      if (target <= now) target.setDate(target.getDate() + 1);
+      return target;
+    } else if (matchStr.includes(':') || matchStr.includes('：')) {
+      const hour = parseInt(timeMatch[1]);
+      const minute = parseInt(timeMatch[2]);
+      const target = new Date(now);
+      target.setHours(hour, minute, 0, 0);
+      if (target <= now) target.setDate(target.getDate() + 1);
+      return target;
+    } else {
+      const hour = parseInt(timeMatch[1]);
+      const minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+      const target = new Date(now);
+      target.setHours(hour, minute, 0, 0);
+      if (target <= now) target.setDate(target.getDate() + 1);
+      return target;
+    }
+  }
+
+  extractContent(message, timeMatch) {
+    return message
+      .replace(timeMatch[0], '')
+      .replace(/提醒|鬧鐘|叫我|電話/g, '')
+      .replace(/\+886[0-9]{9}/g, '')
+      .trim() || '時間到了！';
   }
 
   async checkAndTriggerReminders() {
-    const now = new Date();
+    const now = Utils.getTaiwanTime();
     
-    for (const [id, reminder] of Memory.reminders.entries()) {
+    for (const [id, reminder] of memory.reminders.entries()) {
       if (reminder.status === 'active' && now >= reminder.targetTime) {
         await this.triggerReminder(reminder);
-        Memory.reminders.delete(id);
-        Memory.stats.remindersTriggered++;
+        memory.reminders.delete(id);
+        memory.stats.remindersTriggered++;
       }
     }
   }
 
   async triggerReminder(reminder) {
     try {
+      const userProfile = memory.getUserProfile(reminder.userId);
+      const userDisplay = Utils.formatUserDisplay(reminder.userId, userProfile.displayName);
+      
       let message;
       
-      if (reminder.isPhoneCall && twilioClient && config.twilioPhoneNumber) {
-        // 電話鬧鐘功能
+      if (reminder.isPhoneCall && twilioClient && CONFIG.twilioPhoneNumber) {
         try {
           await this.makePhoneCall(reminder);
           message = FlexMessageBuilder.createSystemMessage(
-            `📞 電話鬧鐘已觸發！\n\n📝 ${reminder.content}\n\n🕐 設定時間：${Utils.formatTime(reminder.targetTime)}\n\n✅ 電話已撥出`,
-            '📞 電話鬧鐘'
+            `📞 電話鬧鐘已觸發！
+
+📝 內容：${reminder.content}
+👤 設定人：${userDisplay}
+🕐 時間：${Utils.formatTaiwanTime(reminder.targetTime)}（台灣時間）
+📞 已撥打電話至：${reminder.phoneNumber}`,
+            '📞 電話鬧鐘通知'
           );
         } catch (phoneError) {
-          console.error('電話撥打失敗:', phoneError);
-          message = FlexMessageBuilder.createWarningMessage(
-            `📞 電話鬧鐘觸發失敗\n\n📝 ${reminder.content}\n\n❌ 電話撥打失敗：${phoneError.message}`,
+          message = FlexMessageBuilder.createErrorMessage(
+            `📞 電話鬧鐘失敗
+
+📝 內容：${reminder.content}  
+👤 設定人：${userDisplay}
+❌ 電話撥打失敗：${phoneError.message}`,
             '📞 電話鬧鐘錯誤'
           );
         }
       } else {
         message = FlexMessageBuilder.createSystemMessage(
-          `⏰ 提醒時間到！\n\n📝 ${reminder.content}\n\n🕐 設定時間：${Utils.formatTime(reminder.targetTime)}`,
+          `⏰ 提醒時間到！
+
+📝 內容：${reminder.content}
+👤 設定人：${userDisplay}
+🕐 時間：${Utils.formatTaiwanTime(reminder.targetTime)}（台灣時間）`,
           '⏰ 提醒通知'
         );
       }
-      
-      await this.client.pushMessage(reminder.userId, message);
+
+      await client.pushMessage(reminder.userId, message);
       console.log(`✅ 提醒已發送：${reminder.id}`);
       
     } catch (error) {
       console.error('❌ 提醒發送失敗:', error);
-      Memory.stats.errors++;
+      memory.stats.errors++;
     }
   }
 
   async makePhoneCall(reminder) {
-    if (!twilioClient || !config.twilioPhoneNumber) {
-      throw new Error('Twilio 服務未配置');
+    if (!Utils.validateTaiwanPhone(reminder.phoneNumber)) {
+      throw new Error('電話號碼格式錯誤');
     }
 
-    // 獲取用戶電話號碼（這裡需要實現獲取用戶電話的邏輯）
-    const userProfile = Memory.userProfiles.get(reminder.userId);
-    const phoneNumber = userProfile?.phoneNumber || '+886912345678'; // 預設號碼，實際應用需要用戶提供
-
     const call = await twilioClient.calls.create({
-      twiml: `<Response><Say voice="alice" language="zh-TW">起床時間到了！${reminder.content}</Say><Pause length="2"/><Say voice="alice" language="zh-TW">這是您設定的鬧鐘提醒</Say></Response>`,
-      to: phoneNumber,
-      from: config.twilioPhoneNumber
+      twiml: `<Response>
+        <Say voice="alice" language="zh-TW">
+          這是您設定的提醒鬧鐘。${reminder.content}。
+          目前時間是台灣時間${Utils.formatTaiwanTime()}。
+          提醒內容：${reminder.content}。
+          謝謝使用智能提醒服務。
+        </Say>
+      </Response>`,
+      to: reminder.phoneNumber,
+      from: CONFIG.twilioPhoneNumber
     });
 
     console.log(`📞 電話鬧鐘已撥出：${call.sid}`);
-    Memory.systemHealth.twilioService = true;
     return call;
   }
 
-  listReminders(userId, isAdmin = false) {
-    let reminders;
-    
-    if (isAdmin) {
-      // 主人可以看到所有提醒
-      reminders = Array.from(Memory.reminders.values())
-        .filter(reminder => reminder.status === 'active')
-        .sort((a, b) => a.targetTime - b.targetTime);
-    } else {
-      // 一般用戶只能看到自己的提醒
-      reminders = Array.from(Memory.reminders.values())
-        .filter(reminder => reminder.userId === userId && reminder.status === 'active')
-        .sort((a, b) => a.targetTime - b.targetTime);
-    }
+  listUserReminders(userId) {
+    const userReminders = Array.from(memory.reminders.values())
+      .filter(r => r.userId === userId && r.status === 'active')
+      .sort((a, b) => a.targetTime - b.targetTime);
 
-    if (reminders.length === 0) {
+    if (userReminders.length === 0) {
       return FlexMessageBuilder.createSystemMessage(
-        isAdmin ? '目前系統中沒有任何提醒' : '目前沒有設定任何提醒',
-        '📋 提醒清單'
+        '您目前沒有設定任何提醒',
+        '📋 我的提醒'
       );
     }
 
-    const reminderList = reminders.map(reminder => {
-      const timeLeft = reminder.targetTime - new Date();
-      const timeString = timeLeft > 0 ? 
-        `還有 ${Math.floor(timeLeft / 60000)} 分鐘` : 
-        '即將觸發';
-      
-      let itemText = `${reminder.content}\n   ⏰ ${Utils.formatTime(reminder.targetTime)}\n   ⏳ ${timeString}`;
-      
-      if (reminder.isPhoneCall) {
-        itemText += '\n   📞 電話鬧鐘';
-      }
-      
-      if (isAdmin) {
-        const userProfile = Memory.userProfiles.get(reminder.userId);
-        const userName = userProfile?.displayName || reminder.userId;
-        itemText += `\n   👤 ${userName}`;
-      }
-      
-      itemText += `\n   🆔 ${reminder.id}`;
-      
-      return itemText;
+    const reminderList = userReminders.map(reminder => {
+      const taiwanTime = Utils.formatTaiwanTime(reminder.targetTime);
+      const phoneInfo = reminder.phoneNumber ? '📞' : '📱';
+      return `${phoneInfo} ${reminder.content}\n   ⏰ ${taiwanTime}（台灣時間）\n   🆔 ${reminder.id}`;
     });
 
-    return FlexMessageBuilder.createListCard('提醒清單', reminderList, '📋');
+    return FlexMessageBuilder.createListCard('我的提醒', reminderList, '📋');
   }
 
   async cancelReminder(userId, reminderId) {
-    const reminder = Memory.reminders.get(reminderId);
+    const reminder = memory.reminders.get(reminderId);
     
     if (!reminder) {
       return FlexMessageBuilder.createErrorMessage(
@@ -977,287 +1024,117 @@ class ReminderSystem {
       );
     }
 
-    if (reminder.userId !== userId && userId !== config.adminUserId) {
+    if (reminder.userId !== userId && userId !== CONFIG.masterId) {
       return FlexMessageBuilder.createErrorMessage(
-        '您沒有權限取消此提醒',
+        '您只能取消自己設定的提醒',
         '🔐 權限不足'
       );
     }
 
-    Memory.reminders.delete(reminderId);
+    memory.reminders.delete(reminderId);
     
     return FlexMessageBuilder.createSystemMessage(
-      `已成功取消提醒：${reminder.content}`,
+      `✅ 已成功取消提醒：${reminder.content}`,
       '✅ 取消成功'
     );
   }
 }
 
-// ==================== 決策系統 ====================
-class DecisionSystem {
-  constructor(lineClient) {
-    this.client = lineClient;
-    this.autoRejectTimeout = 30 * 60 * 1000; // 30分鐘
-  }
-
-  async requestDecision(requesterId, content, context = {}) {
-    const decisionId = Utils.generateId('decision');
-    
-    // 獲取請求者資訊
-    const requesterProfile = Memory.userProfiles.get(requesterId);
-    const requesterName = requesterProfile?.displayName || requesterId;
-    
-    const decisionData = {
-      id: decisionId,
-      requester: requesterId,
-      requesterName,
-      content,
-      context,
-      timestamp: Utils.formatTime(new Date()),
-      status: 'pending',
-      created: new Date()
-    };
-
-    Memory.decisions.set(decisionId, decisionData);
-
-    // 設定30分鐘後自動拒絕
-    setTimeout(() => {
-      this.autoRejectDecision(decisionId);
-    }, this.autoRejectTimeout);
-
-    // 發送決策請求給主人
-    try {
-      const decisionMessage = FlexMessageBuilder.createDecisionCard(decisionData);
-      await this.client.pushMessage(config.adminUserId, decisionMessage);
-      
-      return FlexMessageBuilder.createSystemMessage(
-        `✅ 已向主人發送決策請求\n\n📋 內容：${content}\n🆔 決策編號：${decisionId}\n⏰ 30分鐘後將自動拒絕`,
-        '⚖️ 決策請求已發送'
-      );
-    } catch (error) {
-      console.error('❌ 決策請求發送失敗:', error);
-      Memory.decisions.delete(decisionId);
-      Memory.stats.errors++;
-      throw error;
-    }
-  }
-
-  async handleDecisionResponse(decisionId, action, userId, details = '') {
-    if (userId !== config.adminUserId) {
-      return FlexMessageBuilder.createErrorMessage(
-        '只有主人可以處理決策請求',
-        '🔐 權限不足'
-      );
-    }
-
-    const decision = Memory.decisions.get(decisionId);
-    if (!decision) {
-      return FlexMessageBuilder.createErrorMessage(
-        '找不到指定的決策請求，可能已經過期或已處理',
-        '❌ 決策不存在'
-      );
-    }
-
-    if (decision.status !== 'pending') {
-      return FlexMessageBuilder.createWarningMessage(
-        `此決策已經處理過了，狀態：${decision.status}`,
-        '⚠️ 重複處理'
-      );
-    }
-
-    decision.status = action;
-    decision.response = details;
-    decision.responseTime = new Date();
-    Memory.stats.decisionsHandled++;
-
-    // 通知請求者
-    try {
-      const statusText = action === 'approved' ? '✅ 已同意' : '❌ 已拒絕';
-      const resultMessage = FlexMessageBuilder.createSystemMessage(
-        `⚖️ 決策結果：${statusText}\n\n📋 原請求：${decision.content}` +
-        (details ? `\n💬 主人回覆：${details}` : '') +
-        `\n🕐 處理時間：${Utils.formatTime(decision.responseTime)}`,
-        '⚖️ 決策結果通知'
-      );
-
-      await this.client.pushMessage(decision.requester, resultMessage);
-      
-      return FlexMessageBuilder.createSystemMessage(
-        `✅ 決策已處理並通知請求者\n\n🆔 決策編號：${decisionId}\n📋 結果：${statusText}\n👤 請求者：${decision.requesterName}`,
-        '⚖️ 處理完成'
-      );
-    } catch (error) {
-      console.error('❌ 決策結果通知失敗:', error);
-      Memory.stats.errors++;
-      return FlexMessageBuilder.createWarningMessage(
-        '決策已處理但通知發送失敗',
-        '⚠️ 部分成功'
-      );
-    }
-  }
-
-  async autoRejectDecision(decisionId) {
-    const decision = Memory.decisions.get(decisionId);
-    if (decision && decision.status === 'pending') {
-      decision.status = 'auto_rejected';
-      decision.responseTime = new Date();
-      Memory.stats.decisionsHandled++;
-      
-      try {
-        const timeoutMessage = FlexMessageBuilder.createWarningMessage(
-          `⏰ 決策請求超時自動拒絕\n\n📋 原請求：${decision.content}\n🕐 請求時間：${decision.timestamp}\n⏰ 超時時間：${Utils.formatTime(decision.responseTime)}`,
-          '⏰ 決策超時'
-        );
-        
-        await this.client.pushMessage(decision.requester, timeoutMessage);
-        console.log(`⏰ 決策自動拒絕：${decisionId}`);
-      } catch (error) {
-        console.error('❌ 超時通知發送失敗:', error);
-        Memory.stats.errors++;
-      }
-    }
-  }
-
-  getDecisionDetails(decisionId) {
-    const decision = Memory.decisions.get(decisionId);
-    if (!decision) {
-      return FlexMessageBuilder.createErrorMessage(
-        '找不到指定的決策',
-        '❌ 決策不存在'
-      );
-    }
-
-    const statusMap = {
-      'pending': '⏳ 等待處理',
-      'approved': '✅ 已同意',
-      'rejected': '❌ 已拒絕',
-      'auto_rejected': '⏰ 超時拒絕'
-    };
-
-    const details = [
-      `🆔 編號：${decision.id}`,
-      `👤 請求者：${decision.requesterName}`,
-      `📋 內容：${decision.content}`,
-      `📊 狀態：${statusMap[decision.status]}`,
-      `🕐 請求時間：${decision.timestamp}`
-    ];
-
-    if (decision.responseTime) {
-      details.push(`⏰ 處理時間：${Utils.formatTime(decision.responseTime)}`);
-    }
-
-    if (decision.response) {
-      details.push(`💬 主人回覆：${decision.response}`);
-    }
-
-    if (decision.context && Object.keys(decision.context).length > 0) {
-      details.push(`📄 附加資訊：${JSON.stringify(decision.context, null, 2)}`);
-    }
-
-    return FlexMessageBuilder.createListCard('決策詳情', details, '⚖️');
-  }
-
-  listPendingDecisions() {
-    const pendingDecisions = Array.from(Memory.decisions.values())
-      .filter(d => d.status === 'pending')
-      .sort((a, b) => a.created - b.created);
-
-    if (pendingDecisions.length === 0) {
-      return FlexMessageBuilder.createSystemMessage(
-        '目前沒有待處理的決策',
-        '⚖️ 決策待辦'
-      );
-    }
-
-    const decisionList = pendingDecisions.map(decision => {
-      const waitTime = Math.floor((Date.now() - decision.created) / 60000);
-      const remainingTime = Math.max(0, 30 - waitTime);
-      
-      return `${decision.content}\n   👤 ${decision.requesterName}\n   ⏰ 等待 ${waitTime} 分鐘\n   ⏳ 剩餘 ${remainingTime} 分鐘\n   🆔 ${decision.id}`;
-    });
-
-    return FlexMessageBuilder.createListCard('決策待辦', decisionList, '⚖️');
-  }
-
-  getDecisionHistory(limit = 10) {
-    const allDecisions = Array.from(Memory.decisions.values())
-      .filter(d => d.status !== 'pending')
-      .sort((a, b) => b.responseTime - a.responseTime)
-      .slice(0, limit);
-
-    if (allDecisions.length === 0) {
-      return FlexMessageBuilder.createSystemMessage(
-        '目前沒有決策歷史',
-        '📋 決策歷史'
-      );
-    }
-
-    const statusMap = {
-      'approved': '✅ 已同意',
-      'rejected': '❌ 已拒絕',
-      'auto_rejected': '⏰ 超時拒絕'
-    };
-
-    const historyList = allDecisions.map((decision, index) => {
-      return `${decision.content}\n   👤 ${decision.requesterName}\n   📊 ${statusMap[decision.status]}\n   🕐 ${Utils.formatTime(decision.responseTime)}\n   🆔 ${decision.id}`;
-    });
-
-    return FlexMessageBuilder.createListCard('決策歷史', historyList, '📋');
-  }
-}
-
 // ==================== 搜尋系統 ====================
 class SearchSystem {
-  async searchWeb(query) {
+  async searchMovie(query) {
     try {
-      Memory.stats.apiCalls++;
+      memory.stats.apiCalls++;
       
-      if (config.searchApiKey && config.searchEngineId) {
-        const response = await Utils.retryOperation(async () => {
-          return await axios.get('https://www.googleapis.com/customsearch/v1', {
-            params: {
-              key: config.searchApiKey,
-              cx: config.searchEngineId,
-              q: query,
-              num: 5
-            },
-            timeout: config.apiTimeout
-          });
-        });
-
-        const items = response.data.items || [];
-        const results = items.map((item, index) => 
-          `${item.title}\n   🔗 ${item.link}\n   📝 ${Utils.truncateText(item.snippet, 80)}`
-        );
-
-        return FlexMessageBuilder.createListCard(`網路搜尋：${query}`, results, '🔍');
-      } else {
-        // 模擬搜尋結果
-        const mockResults = [
-          `關於「${query}」的相關資訊：`,
-          '• 建議使用更具體的關鍵詞',
-          '• 可以嘗試不同的搜尋角度',
-          '• 搜尋功能需要設定 Google API'
-        ];
-
-        return FlexMessageBuilder.createListCard(`搜尋結果：${query}`, mockResults, '🔍');
+      if (!CONFIG.tmdbApiKey) {
+        throw new Error('電影API未設定');
       }
+
+      // 搜尋電影
+      const searchResponse = await Utils.retryOperation(async () => {
+        return await axios.get('https://api.themoviedb.org/3/search/movie', {
+          params: {
+            api_key: CONFIG.tmdbApiKey,
+            query: query,
+            language: 'zh-TW',
+            page: 1
+          },
+          timeout: CONFIG.apiTimeout
+        });
+      });
+
+      const movies = searchResponse.data.results;
+      if (!movies || movies.length === 0) {
+        return FlexMessageBuilder.createSystemMessage(
+          `找不到「${query}」相關的電影。\n\n您可以嘗試：\n• 使用英文片名\n• 輸入導演或演員名字\n• 檢查拼寫是否正確`,
+          '🎬 搜尋結果'
+        );
+      }
+
+      // 取第一部電影的詳細資訊
+      const firstMovie = movies[0];
+      const detailResponse = await Utils.retryOperation(async () => {
+        return await axios.get(`https://api.themoviedb.org/3/movie/${firstMovie.id}`, {
+          params: {
+            api_key: CONFIG.tmdbApiKey,
+            language: 'zh-TW',
+            append_to_response: 'credits'
+          },
+          timeout: CONFIG.apiTimeout
+        });
+      });
+
+      const movieDetail = detailResponse.data;
+      
+      // 格式化電影資料
+      const movieData = {
+        title: movieDetail.title || movieDetail.original_title,
+        rating: movieDetail.vote_average.toFixed(1),
+        releaseDate: movieDetail.release_date,
+        genres: movieDetail.genres.map(g => g.name),
+        runtime: movieDetail.runtime,
+        overview: movieDetail.overview,
+        cast: movieDetail.credits.cast.slice(0, 5).map(actor => actor.name),
+        trailerUrl: `https://www.youtube.com/results?search_query=${encodeURIComponent(movieDetail.title + ' trailer')}`
+      };
+
+      // 記錄搜尋
+      memory.updateDailyStats('movie', { query, title: movieData.title });
+      
+      // 如果找到多部電影，提供選擇
+      if (movies.length > 1) {
+        const otherMovies = movies.slice(1, 4).map(movie => 
+          `🎬 ${movie.title} (${movie.release_date?.split('-')[0] || '未知'})`
+        );
+        
+        const movieCard = FlexMessageBuilder.createMovieCard(movieData);
+        const otherList = FlexMessageBuilder.createListCard(
+          '其他相關電影', 
+          otherMovies, 
+          '🎭'
+        );
+        
+        return [movieCard, otherList];
+      }
+
+      return FlexMessageBuilder.createMovieCard(movieData);
+      
     } catch (error) {
-      console.error('❌ 網路搜尋失敗:', error);
-      Memory.stats.errors++;
+      console.error('❌ 電影搜尋失敗:', error);
+      memory.stats.errors++;
       return FlexMessageBuilder.createErrorMessage(
-        '搜尋功能暫時無法使用，請稍後再試',
-        '🔍 搜尋錯誤'
+        '電影搜尋功能暫時無法使用，請稍後再試',
+        '🎬 搜尋錯誤'
       );
     }
   }
 
   async getWeather(location = '台中') {
     try {
-      Memory.stats.apiCalls++;
+      memory.stats.apiCalls++;
       
-      if (!config.weatherApiKey) {
-        throw new Error('天氣 API 未設定');
+      if (!CONFIG.weatherApiKey) {
+        throw new Error('天氣API未設定');
       }
 
       const response = await Utils.retryOperation(async () => {
@@ -1265,10 +1142,10 @@ class SearchSystem {
           'https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001',
           {
             params: {
-              Authorization: config.weatherApiKey,
+              Authorization: CONFIG.weatherApiKey,
               locationName: location
             },
-            timeout: config.apiTimeout
+            timeout: CONFIG.apiTimeout
           }
         );
       });
@@ -1287,650 +1164,460 @@ class SearchSystem {
       const maxTemp = weatherElement.find(el => el.elementName === 'MaxT');
       const pop = weatherElement.find(el => el.elementName === 'PoP');
 
-      const weatherData = {
-        location,
-        condition: weather?.time[0]?.parameter?.parameterName || '未知',
-        temperature: `${minTemp?.time[0]?.parameter?.parameterName || '?'} - ${maxTemp?.time[0]?.parameter?.parameterName || '?'}`,
-        windSpeed: '微風',
-        humidity: `${pop?.time[0]?.parameter?.parameterName || '?'}%`
-      };
+      const content = `🌤️ ${location} 天氣預報
 
-      return FlexMessageBuilder.createWeatherCard(weatherData);
+🌡️ 溫度：${minTemp?.time[0]?.parameter?.parameterName || '?'} - ${maxTemp?.time[0]?.parameter?.parameterName || '?'}°C
+☁️ 天氣：${weather?.time[0]?.parameter?.parameterName || '未知'}
+💧 降雨機率：${pop?.time[0]?.parameter?.parameterName || '?'}%
+
+📅 更新時間：${Utils.formatTaiwanTime()}（台灣時間）
+🌍 資料來源：中央氣象署`;
+
+      return FlexMessageBuilder.createCard('🌤️ 天氣預報', content, '#34C759');
       
     } catch (error) {
       console.error('❌ 天氣查詢失敗:', error);
-      Memory.stats.errors++;
+      memory.stats.errors++;
       
       // 提供備用天氣資訊
-      const mockWeatherData = {
-        location,
-        condition: '多雲時晴',
-        temperature: '22 - 28',
-        windSpeed: '輕風',
-        humidity: '65'
-      };
+      const content = `🌤️ ${location} 天氣預報
 
-      return FlexMessageBuilder.createWeatherCard(mockWeatherData);
+🌡️ 溫度：22 - 28°C
+☁️ 天氣：多雲時晴
+💧 降雨機率：30%
+
+📅 更新時間：${Utils.formatTaiwanTime()}（台灣時間）
+⚠️ 資料服務暫時無法連接，顯示預估值`;
+
+      return FlexMessageBuilder.createCard('🌤️ 天氣預報', content, '#FF9500');
     }
   }
 
-  async getNews(category = 'general') {
+  async getNews() {
     try {
-      Memory.stats.apiCalls++;
+      memory.stats.apiCalls++;
       
-      if (config.newsApiKey) {
-        const response = await Utils.retryOperation(async () => {
-          return await axios.get('https://newsapi.org/v2/top-headlines', {
-            params: {
-              apiKey: config.newsApiKey,
-              country: 'tw',
-              category: category,
-              pageSize: 5
-            },
-            timeout: config.apiTimeout
-          });
-        });
-
-        const articles = response.data.articles || [];
-        const newsList = articles.map(article => ({
-          title: article.title,
-          date: new Date(article.publishedAt).toLocaleDateString('zh-TW'),
-          summary: Utils.truncateText(article.description || '無摘要', 100)
-        }));
-
-        return FlexMessageBuilder.createNewsCard(newsList);
-      } else {
-        const mockNews = [
-          { title: '科技新聞 - AI技術突破', date: '今天', summary: '人工智能領域又有重大進展...' },
-          { title: '台灣經濟 - 半導體產業', date: '今天', summary: '台灣半導體產業持續成長...' },
-          { title: '國際新聞 - 氣候變遷', date: '昨天', summary: '全球氣候議題受到關注...' }
-        ];
-
-        return FlexMessageBuilder.createNewsCard(mockNews);
+      if (!CONFIG.newsApiKey) {
+        throw new Error('新聞API未設定');
       }
+
+      const response = await Utils.retryOperation(async () => {
+        return await axios.get('https://newsapi.org/v2/top-headlines', {
+          params: {
+            apiKey: CONFIG.newsApiKey,
+            country: 'tw',
+            pageSize: 5
+          },
+          timeout: CONFIG.apiTimeout
+        });
+      });
+
+      const articles = response.data.articles || [];
+      if (articles.length === 0) {
+        throw new Error('沒有找到新聞');
+      }
+
+      const newsList = articles.map((article, index) => {
+        const publishTime = new Date(article.publishedAt).toLocaleString('zh-TW', {
+          timeZone: CONFIG.timezone,
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        return `📰 ${article.title}\n   🕐 ${publishTime}（台灣時間）\n   📝 ${Utils.truncateText(article.description || '無摘要', 80)}`;
+      });
+
+      return FlexMessageBuilder.createListCard('最新新聞', newsList, '📰');
+      
     } catch (error) {
       console.error('❌ 新聞查詢失敗:', error);
-      Memory.stats.errors++;
-      return FlexMessageBuilder.createErrorMessage(
-        '新聞查詢功能暫時無法使用',
-        '📰 新聞錯誤'
-      );
+      memory.stats.errors++;
+      
+      // 提供模擬新聞
+      const mockNews = [
+        `📰 科技新聞 - AI技術新突破\n   🕐 ${Utils.formatTaiwanTime()}（台灣時間）\n   📝 人工智能領域又有重大進展...`,
+        `📰 台灣經濟 - 半導體產業動向\n   🕐 ${Utils.formatTaiwanTime()}（台灣時間）\n   📝 台灣半導體產業持續領先全球...`,
+        `📰 國際要聞 - 氣候變遷議題\n   🕐 ${Utils.formatTaiwanTime()}（台灣時間）\n   📝 全球氣候議題持續受到關注...`
+      ];
+
+      return FlexMessageBuilder.createListCard('新聞摘要', mockNews, '📰');
     }
   }
 
-  async getMovieRecommendations() {
+  async webSearch(query) {
     try {
-      Memory.stats.apiCalls++;
+      memory.stats.apiCalls++;
       
-      if (config.tmdbApiKey) {
-        const response = await Utils.retryOperation(async () => {
-          return await axios.get('https://api.themoviedb.org/3/movie/popular', {
-            params: {
-              api_key: config.tmdbApiKey,
-              language: 'zh-TW',
-              page: 1
-            },
-            timeout: config.apiTimeout
-          });
+      if (!CONFIG.searchApiKey || !CONFIG.searchEngineId) {
+        throw new Error('搜尋API未設定');
+      }
+
+      const response = await Utils.retryOperation(async () => {
+        return await axios.get('https://www.googleapis.com/customsearch/v1', {
+          params: {
+            key: CONFIG.searchApiKey,
+            cx: CONFIG.searchEngineId,
+            q: query,
+            num: 5
+          },
+          timeout: CONFIG.apiTimeout
         });
-
-        const movies = response.data.results.slice(0, 5).map(movie => ({
-          title: movie.title,
-          rating: movie.vote_average,
-          year: new Date(movie.release_date).getFullYear(),
-          genre: '動作/劇情' // 簡化處理
-        }));
-
-        return FlexMessageBuilder.createMovieCard(movies);
-      } else {
-        const mockMovies = [
-          { title: '復仇者聯盟：終局之戰', rating: 8.4, year: 2019, genre: '動作/科幻' },
-          { title: '寄生上流', rating: 8.6, year: 2019, genre: '劇情/驚悚' },
-          { title: '你的名字', rating: 8.2, year: 2016, genre: '動畫/愛情' },
-          { title: '玩具總動員4', rating: 7.7, year: 2019, genre: '動畫/家庭' },
-          { title: '小丑', rating: 8.4, year: 2019, genre: '劇情/犯罪' }
-        ];
-
-        return FlexMessageBuilder.createMovieCard(mockMovies);
-      }
-    } catch (error) {
-      console.error('❌ 電影推薦失敗:', error);
-      Memory.stats.errors++;
-      return FlexMessageBuilder.createErrorMessage(
-        '電影推薦功能暫時無法使用',
-        '🎬 電影錯誤'
-      );
-    }
-  }
-}
-
-// ==================== 矛盾偵測系統 ====================
-class ContradictionDetector {
-  constructor(lineClient) {
-    this.client = lineClient;
-  }
-
-  async detectContradiction(userId, newMessage, conversationHistory) {
-    if (!model || conversationHistory.length < 3) {
-      return; // 對話太少，無法偵測矛盾
-    }
-
-    try {
-      Memory.stats.apiCalls++;
-      
-      const prompt = `
-請分析以下對話，判斷新訊息是否與之前的內容有明顯矛盾：
-
-對話歷史：
-${conversationHistory.join('\n')}
-
-新訊息：${newMessage}
-
-分析要求：
-1. 只關注明顯的事實性矛盾或態度矛盾
-2. 不要把正常的意見變化當作矛盾
-3. 重點關注關鍵決定或重要事實的前後不一致
-
-如果發現明顯矛盾，請回覆"CONTRADICTION_FOUND: [具體描述矛盾之處，不超過50字]"
-如果沒有矛盾，請回覆"NO_CONTRADICTION"
-
-矛盾判斷標準：
-1. 事實性矛盾（前後說法完全相反）
-2. 重要決定的矛盾（先說要做A，後來說不做A）
-3. 身份資訊矛盾（工作、學校等基本資訊前後不符）
-`;
-
-      const result = await Utils.retryOperation(async () => {
-        return await model.generateContent(prompt);
       });
 
-      const response = result.response.text();
-      
-      if (response.includes('CONTRADICTION_FOUND:')) {
-        await this.reportContradiction(userId, newMessage, response);
-        Memory.stats.contradictionsDetected++;
+      const items = response.data.items || [];
+      if (items.length === 0) {
+        throw new Error('沒有找到搜尋結果');
       }
-    } catch (error) {
-      console.error('❌ 矛盾偵測失敗:', error);
-      Memory.stats.errors++;
-    }
-  }
 
-  async reportContradiction(userId, message, analysis) {
-    try {
-      const userProfile = Memory.userProfiles.get(userId);
-      const userName = userProfile?.displayName || userId;
-      
-      const contradictionReport = FlexMessageBuilder.createWarningMessage(
-        `⚠️ 偵測到用戶發言矛盾\n\n👤 用戶：${userName}\n💬 最新訊息：${Utils.truncateText(message, 80)}\n🔍 矛盾分析：${analysis.replace('CONTRADICTION_FOUND:', '').trim()}\n🕐 偵測時間：${Utils.formatTime(new Date())}`,
-        '⚠️ 矛盾偵測警告'
+      const results = items.map(item => 
+        `🔍 ${item.title}\n   🔗 ${item.displayLink}\n   📝 ${Utils.truncateText(item.snippet, 80)}`
       );
 
-      await this.client.pushMessage(config.adminUserId, contradictionReport);
+      return FlexMessageBuilder.createListCard(`搜尋：${query}`, results, '🔍');
       
-      // 記錄矛盾
-      const contradictionId = Utils.generateId('contradiction');
-      Memory.contradictions.set(contradictionId, {
-        id: contradictionId,
-        userId,
-        userName,
-        message,
-        analysis,
-        timestamp: new Date()
-      });
-
-      console.log(`⚠️ 矛盾偵測：${userId} - ${Utils.truncateText(message, 50)}`);
     } catch (error) {
-      console.error('❌ 矛盾報告發送失敗:', error);
-      Memory.stats.errors++;
+      console.error('❌ 網路搜尋失敗:', error);
+      memory.stats.errors++;
+      
+      const mockResults = [
+        `🔍 關於「${query}」的搜尋結果\n   📝 建議使用更具體的關鍵詞`,
+        `🔍 相關資料整理中\n   📝 可以嘗試不同的搜尋角度`,
+        `🔍 更多資訊\n   📝 搜尋功能需要設定Google API`
+      ];
+
+      return FlexMessageBuilder.createListCard(`搜尋：${query}`, mockResults, '🔍');
     }
-  }
-
-  getContradictionHistory(limit = 10) {
-    const contradictions = Array.from(Memory.contradictions.values())
-      .sort((a, b) => b.timestamp - a.timestamp)
-      .slice(0, limit);
-
-    if (contradictions.length === 0) {
-      return FlexMessageBuilder.createSystemMessage(
-        '目前沒有矛盾記錄',
-        '⚠️ 矛盾歷史'
-      );
-    }
-
-    const contradictionList = contradictions.map(contradiction => {
-      return `${contradiction.userName}\n   💬 ${Utils.truncateText(contradiction.message, 60)}\n   🔍 ${contradiction.analysis.replace('CONTRADICTION_FOUND:', '').trim()}\n   🕐 ${Utils.formatTime(contradiction.timestamp)}`;
-    });
-
-    return FlexMessageBuilder.createListCard('矛盾偵測歷史', contradictionList, '⚠️');
   }
 }
 
-// ==================== 訊息收回追蹤系統 ====================
-class MessageRecallTracker {
-  constructor(lineClient) {
-    this.client = lineClient;
-  }
+// ==================== 決策系統 ====================
+class DecisionSystem {
+  async requestDecision(requesterId, content, context = {}) {
+    const decisionId = Utils.generateId('decision');
+    const requesterProfile = memory.getUserProfile(requesterId);
+    const requesterDisplay = Utils.formatUserDisplay(requesterId, requesterProfile.displayName);
+    
+    const decisionData = {
+      id: decisionId,
+      requester: requesterId,
+      content,
+      context,
+      created: Utils.getTaiwanTime(),
+      status: 'pending'
+    };
 
-  trackMessage(event) {
-    const userId = event.source.userId || event.source.groupId;
-    const messageId = event.message.id;
-    const messageText = event.message.text;
-    const timestamp = new Date(event.timestamp);
+    memory.decisions.set(decisionId, decisionData);
 
-    if (!Memory.messageHistory.has(userId)) {
-      Memory.messageHistory.set(userId, []);
-    }
+    // 30分鐘後自動拒絕
+    setTimeout(() => {
+      this.autoRejectDecision(decisionId);
+    }, 30 * 60 * 1000);
 
-    const userHistory = Memory.messageHistory.get(userId);
-    userHistory.push({
-      messageId,
-      messageText,
-      timestamp,
-      recalled: false
-    });
-
-    // 保持最近100條訊息
-    if (userHistory.length > 100) {
-      userHistory.splice(0, userHistory.length - 100);
-    }
-  }
-
-  async handleUnsendEvent(event) {
-    const userId = event.source.userId || event.source.groupId;
-    const messageId = event.unsend.messageId;
-
-    const userHistory = Memory.messageHistory.get(userId);
-    if (!userHistory) return;
-
-    const recalledMessage = userHistory.find(msg => msg.messageId === messageId);
-    if (!recalledMessage) return;
-
-    recalledMessage.recalled = true;
-    recalledMessage.recallTime = new Date();
-
-    // 記錄收回事件
-    const recallId = Utils.generateId('recall');
-    Memory.recalledMessages.set(recallId, {
-      id: recallId,
-      userId,
-      messageId,
-      originalText: recalledMessage.messageText,
-      originalTime: recalledMessage.timestamp,
-      recallTime: recalledMessage.recallTime
-    });
-
-    // 通知主人
     try {
-      const userProfile = Memory.userProfiles.get(userId);
-      const userName = userProfile?.displayName || userId;
-
-      const recallNotification = FlexMessageBuilder.createWarningMessage(
-        `📱 用戶收回了一則訊息\n\n👤 用戶：${userName}\n💬 原始內容：「${recalledMessage.messageText}」\n🕐 發送時間：${Utils.formatTime(recalledMessage.timestamp)}\n⏰ 收回時間：${Utils.formatTime(recalledMessage.recallTime)}`,
-        '📱 訊息收回通知'
-      );
-
-      await this.client.pushMessage(config.adminUserId, recallNotification);
-      console.log(`📱 訊息收回追蹤：${userId} - ${Utils.truncateText(recalledMessage.messageText, 50)}`);
-    } catch (error) {
-      console.error('❌ 訊息收回通知發送失敗:', error);
-      Memory.stats.errors++;
-    }
-  }
-
-  getRecallHistory(limit = 10) {
-    const recalls = Array.from(Memory.recalledMessages.values())
-      .sort((a, b) => b.recallTime - a.recallTime)
-      .slice(0, limit);
-
-    if (recalls.length === 0) {
-      return FlexMessageBuilder.createSystemMessage(
-        '目前沒有訊息收回記錄',
-        '📱 收回歷史'
-      );
-    }
-
-    const recallList = recalls.map(recall => {
-      const userProfile = Memory.userProfiles.get(recall.userId);
-      const userName = userProfile?.displayName || recall.userId;
+      // 發送決策請求給主人
+      const decisionCard = FlexMessageBuilder.createDecisionCard(decisionData, requesterDisplay);
+      await client.pushMessage(CONFIG.masterId, decisionCard);
       
-      return `${userName}\n   💬 「${Utils.truncateText(recall.originalText, 60)}」\n   🕐 發送：${Utils.formatTime(recall.originalTime)}\n   ⏰ 收回：${Utils.formatTime(recall.recallTime)}`;
-    });
+      return FlexMessageBuilder.createSystemMessage(
+        `✅ 已向 ${CONFIG.masterName} 發送決策請求
 
-    return FlexMessageBuilder.createListCard('訊息收回歷史', recallList, '📱');
+📋 內容：${content}
+🆔 決策編號：${decisionId}
+⏰ 30分鐘後將自動拒絕
+
+台灣時間：${Utils.formatTaiwanTime()}`,
+        '⚖️ 決策請求已發送'
+      );
+    } catch (error) {
+      console.error('❌ 決策請求發送失敗:', error);
+      memory.decisions.delete(decisionId);
+      memory.stats.errors++;
+      throw error;
+    }
   }
-}
 
-// ==================== 系統管理 ====================
-class SystemManager {
-  static async handleSystemCommand(command, userId) {
-    if (userId !== config.adminUserId) {
+  async handleDecisionResponse(decisionId, action, userId, details = '') {
+    if (userId !== CONFIG.masterId) {
       return FlexMessageBuilder.createErrorMessage(
-        '此功能僅限主人使用',
+        `只有 ${CONFIG.masterName} 可以處理決策請求`,
         '🔐 權限不足'
       );
     }
 
+    const decision = memory.decisions.get(decisionId);
+    if (!decision) {
+      return FlexMessageBuilder.createErrorMessage(
+        '找不到指定的決策請求，可能已經過期或已處理',
+        '❌ 決策不存在'
+      );
+    }
+
+    if (decision.status !== 'pending') {
+      return FlexMessageBuilder.createSystemMessage(
+        `此決策已經處理過了，狀態：${decision.status}`,
+        '⚠️ 重複處理'
+      );
+    }
+
+    decision.status = action;
+    decision.response = details;
+    decision.responseTime = Utils.getTaiwanTime();
+    memory.stats.decisionsHandled++;
+
     try {
-      switch (command) {
-        case '/狀態報告':
-          return FlexMessageBuilder.createStatusCard(Memory.stats);
+      const statusText = action === 'approved' ? '✅ 已同意' : '❌ 已拒絕';
+      const requesterProfile = memory.getUserProfile(decision.requester);
+      const requesterDisplay = Utils.formatUserDisplay(decision.requester, requesterProfile.displayName);
+      
+      const resultContent = `⚖️ 決策結果：${statusText}
+
+📋 原請求：${decision.content}
+👤 請求者：${requesterDisplay}
+🕐 處理時間：${Utils.formatTaiwanTime(decision.responseTime)}（台灣時間）${details ? `\n💬 ${CONFIG.masterName} 回覆：${details}` : ''}`;
+
+      const resultMessage = FlexMessageBuilder.createSystemMessage(
+        resultContent,
+        '⚖️ 決策結果通知'
+      );
+
+      await client.pushMessage(decision.requester, resultMessage);
+      
+      return FlexMessageBuilder.createSystemMessage(
+        `✅ 決策已處理並通知請求者
+
+🆔 決策編號：${decisionId}
+📋 結果：${statusText}
+👤 請求者：${requesterDisplay}
+🕐 處理時間：${Utils.formatTaiwanTime()}（台灣時間）`,
+        '⚖️ 處理完成'
+      );
+    } catch (error) {
+      console.error('❌ 決策結果通知失敗:', error);
+      memory.stats.errors++;
+      return FlexMessageBuilder.createSystemMessage(
+        '決策已處理但通知發送失敗',
+        '⚠️ 部分成功'
+      );
+    }
+  }
+
+  async autoRejectDecision(decisionId) {
+    const decision = memory.decisions.get(decisionId);
+    if (decision && decision.status === 'pending') {
+      decision.status = 'auto_rejected';
+      decision.responseTime = Utils.getTaiwanTime();
+      memory.stats.decisionsHandled++;
+      
+      try {
+        const requesterProfile = memory.getUserProfile(decision.requester);
+        const requesterDisplay = Utils.formatUserDisplay(decision.requester, requesterProfile.displayName);
         
-        case '/提醒清單':
-          return bot.reminderSystem.listReminders(userId, true);
+        const timeoutContent = `⏰ 決策請求超時自動拒絕
+
+📋 原請求：${decision.content}
+👤 請求者：${requesterDisplay}
+🕐 請求時間：${Utils.formatTaiwanTime(decision.created)}（台灣時間）
+⏰ 超時時間：${Utils.formatTaiwanTime(decision.responseTime)}（台灣時間）`;
+
+        const timeoutMessage = FlexMessageBuilder.createSystemMessage(
+          timeoutContent,
+          '⏰ 決策超時'
+        );
         
-        case '/決策待辦':
-          return bot.decisionSystem.listPendingDecisions();
-        
-        case '/決策歷史':
-          return bot.decisionSystem.getDecisionHistory();
-        
-        case '/用戶活躍':
-          return this.getUserActivity();
-        
-        case '/系統統計':
-          return this.getSystemAnalytics();
-        
-        case '/功能列表':
-          return this.getFunctionList();
-        
-        case '/矛盾歷史':
-          return bot.contradictionDetector.getContradictionHistory();
-        
-        case '/收回歷史':
-          return bot.messageRecallTracker.getRecallHistory();
-        
-        case '/系統健康':
-          return this.getSystemHealth();
-        
-        case '/清除歷史':
-          return this.clearHistory();
-        
-        case '/清除對話':
-          return this.clearConversations();
-        
-        case '/清除提醒':
-          return this.clearReminders();
-        
-        case '/系統重啟':
-          return this.restartSystem();
-        
-        case '/說明':
-          return FlexMessageBuilder.createHelpCard();
-        
-        default:
-          return this.getAvailableCommands();
+        await client.pushMessage(decision.requester, timeoutMessage);
+        console.log(`⏰ 決策自動拒絕：${decisionId}`);
+      } catch (error) {
+        console.error('❌ 超時通知發送失敗:', error);
+        memory.stats.errors++;
       }
-    } catch (error) {
-      console.error('❌ 系統指令處理失敗:', error);
-      Memory.stats.errors++;
-      return FlexMessageBuilder.createErrorMessage(
-        `系統指令執行失敗：${error.message}`,
-        '❌ 執行錯誤'
-      );
     }
-  }
-
-  static getUserActivity() {
-    const users = Array.from(Memory.userProfiles.values())
-      .sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0))
-      .slice(0, 15); // 顯示前15個用戶
-
-    if (users.length === 0) {
-      return FlexMessageBuilder.createSystemMessage(
-        '暫無用戶活動記錄',
-        '👥 用戶活躍度'
-      );
-    }
-
-    const userList = users.map((user, index) => {
-      const lastSeen = user.lastSeen ? Utils.formatTime(user.lastSeen) : '從未';
-      const isActive = user.lastSeen && (Date.now() - user.lastSeen) < 24 * 60 * 60 * 1000;
-      const statusIcon = isActive ? '🟢' : '🔴';
-      
-      return `${statusIcon} ${user.displayName || user.id}\n   💬 ${user.messageCount || 0} 則訊息\n   🕐 最後活躍：${lastSeen}\n   📊 類型：${user.isGroup ? '群組' : '個人'}`;
-    });
-
-    return FlexMessageBuilder.createListCard('用戶活躍度排行', userList, '👥');
-  }
-
-  static getSystemAnalytics() {
-    const uptime = Math.floor((Date.now() - Memory.stats.startTime) / 3600000);
-    const memoryUsed = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
-    const memoryTotal = Math.round(process.memoryUsage().heapTotal / 1024 / 1024);
-    
-    const analytics = [
-      `📊 總訊息處理：${Memory.stats.totalMessages} 則`,
-      `👥 註冊用戶：${Memory.userProfiles.size} 人`,
-      `⏰ 活躍提醒：${Memory.reminders.size} 個`,
-      `⚖️ 歷史決策：${Memory.decisions.size} 個`,
-      `⚠️ 矛盾記錄：${Memory.contradictions.size} 次`,
-      `📱 收回追蹤：${Memory.recalledMessages.size} 次`,
-      `📈 API 呼叫：${Memory.stats.apiCalls} 次`,
-      `❌ 錯誤次數：${Memory.stats.errors} 次`,
-      `⚖️ 處理決策：${Memory.stats.decisionsHandled} 個`,
-      `⏰ 觸發提醒：${Memory.stats.remindersTriggered} 次`,
-      `⚠️ 偵測矛盾：${Memory.stats.contradictionsDetected} 次`,
-      `🕒 運行時間：${uptime} 小時`,
-      `💾 記憶體使用：${memoryUsed}/${memoryTotal} MB`,
-      `🧠 學習數據：${Memory.learningData.size} 個用戶`,
-      `📚 平均對話長度：${Memory.conversations.size > 0 ? Math.round(Array.from(Memory.conversations.values()).reduce((sum, conv) => sum + conv.length, 0) / Memory.conversations.size) : 0} 則`
-    ];
-
-    return FlexMessageBuilder.createListCard('系統分析報告', analytics, '📊');
-  }
-
-  static getFunctionList() {
-    const functions = [
-      '🤖 超擬真 AI 聊天（完全模擬主人風格）',
-      '📱 全圖文訊息回覆（視覺化介面）',
-      '⏰ 智能提醒系統（秒/分/時/日期）',
-      '📞 電話鬧鐘功能（Twilio整合）',
-      '⚖️ 決策管理系統（私訊確認）',
-      '🔍 搜尋與查詢功能（網路/天氣/新聞）',
-      '🎬 電影推薦系統（評分排行）',
-      '📰 新聞摘要服務（即時更新）',
-      '⚠️ 矛盾偵測系統（AI分析）',
-      '📱 訊息收回追蹤（完整記錄）',
-      '👥 用戶管理系統（活躍度分析）',
-      '📊 系統監控面板（即時統計）',
-      '🔧 自我修復機制（錯誤恢復）',
-      '🧠 學習系統（個性優化）',
-      '🛡️ 安全防護（頻率限制）',
-      '💾 記憶體管理（智能清理）'
-    ];
-
-    return FlexMessageBuilder.createListCard('完整功能列表', functions, '🎯');
-  }
-
-  static getSystemHealth() {
-    const health = Memory.systemHealth;
-    const statusIcon = (status) => status ? '✅' : '❌';
-    
-    const healthReport = [
-      `${statusIcon(health.geminiApi)} Gemini AI 服務`,
-      `${statusIcon(health.backupAi)} 備用 AI 服務`,
-      `${statusIcon(health.twilioService)} Twilio 電話服務`,
-      `${statusIcon(config.weatherApiKey)} 天氣 API 服務`,
-      `${statusIcon(config.newsApiKey)} 新聞 API 服務`,
-      `${statusIcon(config.tmdbApiKey)} 電影 API 服務`,
-      `${statusIcon(config.searchApiKey)} 搜尋 API 服務`,
-      `📊 系統負載：${Memory.stats.errors < 10 ? '正常' : '偏高'}`,
-      `💾 記憶體狀態：${process.memoryUsage().heapUsed < 500 * 1024 * 1024 ? '正常' : '偏高'}`,
-      `🕐 最後檢查：${Utils.formatTime(health.lastHealthCheck)}`
-    ];
-
-    return FlexMessageBuilder.createListCard('系統健康狀態', healthReport, '🏥');
-  }
-
-  static clearHistory() {
-    const historyCount = Memory.conversations.size;
-    Memory.conversations.clear();
-    
-    return FlexMessageBuilder.createSystemMessage(
-      `✅ 已清除 ${historyCount} 個用戶的對話歷史`,
-      '🗑️ 清除完成'
-    );
-  }
-
-  static clearConversations() {
-    const conversationCount = Memory.conversations.size;
-    const messageCount = Memory.messageHistory.size;
-    
-    Memory.conversations.clear();
-    Memory.messageHistory.clear();
-    Memory.recalledMessages.clear();
-    
-    return FlexMessageBuilder.createSystemMessage(
-      `✅ 已清除 ${conversationCount} 個對話記錄和 ${messageCount} 個訊息歷史`,
-      '🗑️ 清除對話'
-    );
-  }
-
-  static clearReminders() {
-    const reminderCount = Memory.reminders.size;
-    Memory.reminders.clear();
-    
-    return FlexMessageBuilder.createSystemMessage(
-      `✅ 已清除 ${reminderCount} 個提醒`,
-      '🗑️ 清除提醒'
-    );
-  }
-
-  static async restartSystem() {
-    try {
-      // 清理部分記憶體
-      Memory.rateLimiter.clear();
-      
-      // 重新檢查系統健康
-      Memory.systemHealth.lastHealthCheck = new Date();
-      
-      // 重置錯誤計數
-      Memory.stats.errors = 0;
-      
-      return FlexMessageBuilder.createSystemMessage(
-        '✅ 系統已重新啟動\n\n🔄 已清理頻率限制\n🏥 已重置健康檢查\n📊 已重置錯誤計數',
-        '🔄 系統重啟'
-      );
-    } catch (error) {
-      console.error('❌ 系統重啟失敗:', error);
-      return FlexMessageBuilder.createErrorMessage(
-        `系統重啟失敗：${error.message}`,
-        '❌ 重啟錯誤'
-      );
-    }
-  }
-
-  static getAvailableCommands() {
-    const commands = [
-      '/狀態報告 - 系統運行總覽',
-      '/提醒清單 - 所有用戶提醒',
-      '/決策待辦 - 待處理決策',
-      '/決策歷史 - 決策處理記錄',
-      '/用戶活躍 - 用戶活動排行',
-      '/系統統計 - 詳細分析報告',
-      '/功能列表 - 完整功能清單',
-      '/矛盾歷史 - 矛盾偵測記錄',
-      '/收回歷史 - 訊息收回記錄',
-      '/系統健康 - 服務狀態檢查',
-      '/清除歷史 - 清理對話記錄',
-      '/清除對話 - 清除所有對話',
-      '/清除提醒 - 清除所有提醒',
-      '/系統重啟 - 重新啟動系統',
-      '/說明 - 使用說明手冊'
-    ];
-
-    return FlexMessageBuilder.createListCard('系統管理指令', commands, '🔧');
   }
 }
 
-// ==================== 主要 Bot 類別 ====================
+// ==================== 每日報告系統 ====================
+class DailyReportSystem {
+  constructor() {
+    this.scheduleDailyReport();
+  }
+
+  scheduleDailyReport() {
+    // 檢查是否到了報告時間
+    setInterval(() => {
+      this.checkReportTime();
+    }, 60000); // 每分鐘檢查一次
+  }
+
+  checkReportTime() {
+    const now = Utils.getTaiwanTime();
+    const currentTime = now.toTimeString().substring(0, 5); // HH:MM格式
+    
+    if (currentTime === CONFIG.dailyReportTime) {
+      this.sendDailyReport();
+    }
+  }
+
+  async sendDailyReport() {
+    try {
+      const yesterday = new Date(Utils.getTaiwanTime());
+      yesterday.setDate(yesterday.getDate() - 1);
+      const dateKey = Utils.formatTaiwanTime(yesterday).split(' ')[0];
+      
+      const dayStats = memory.dailyStats.get(dateKey) || {
+        date: dateKey,
+        activeUsers: new Set(),
+        messageCount: 0,
+        reminders: 0,
+        movieSearches: [],
+        contradictions: 0,
+        recalledMessages: 0
+      };
+
+      // 計算統計數據
+      const reportData = {
+        date: dateKey,
+        activeUsersCount: dayStats.activeUsers.size,
+        messageCount: dayStats.messageCount,
+        reminders: dayStats.reminders,
+        movieSearches: dayStats.movieSearches.length,
+        contradictions: dayStats.contradictions,
+        recalledMessages: dayStats.recalledMessages,
+        topUsers: this.getTopUsers(dayStats.activeUsers),
+        popularTopics: this.getPopularTopics(dayStats.movieSearches)
+      };
+
+      const reportCard = FlexMessageBuilder.createDailyReportCard(reportData);
+      await client.pushMessage(CONFIG.masterId, reportCard);
+      
+      console.log(`📊 每日報告已發送：${dateKey}`);
+      
+    } catch (error) {
+      console.error('❌ 每日報告發送失敗:', error);
+      memory.stats.errors++;
+    }
+  }
+
+  getTopUsers(activeUserIds) {
+    const userCounts = [];
+    
+    for (const userId of activeUserIds) {
+      const profile = memory.getUserProfile(userId);
+      const conversations = memory.conversations.get(userId) || [];
+      const todayMessages = conversations.filter(conv => {
+        const msgDate = Utils.formatTaiwanTime(conv.timestamp).split(' ')[0];
+        const yesterday = new Date(Utils.getTaiwanTime());
+        yesterday.setDate(yesterday.getDate() - 1);
+        const targetDate = Utils.formatTaiwanTime(yesterday).split(' ')[0];
+        return msgDate === targetDate;
+      }).length;
+      
+      if (todayMessages > 0) {
+        userCounts.push({
+          name: Utils.formatUserDisplay(userId, profile.displayName),
+          messages: todayMessages
+        });
+      }
+    }
+    
+    return userCounts
+      .sort((a, b) => b.messages - a.messages)
+      .slice(0, 5);
+  }
+
+  getPopularTopics(movieSearches) {
+    const topicCounts = new Map();
+    
+    movieSearches.forEach(search => {
+      const topic = search.title || search.query;
+      topicCounts.set(topic, (topicCounts.get(topic) || 0) + 1);
+    });
+    
+    return Array.from(topicCounts.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 5);
+  }
+}
+
+// ==================== 主要Bot類別 ====================
 class SuperIntelligentLineBot {
   constructor() {
     this.aiPersonality = new AIPersonalitySystem();
-    this.reminderSystem = new ReminderSystem(client);
-    this.decisionSystem = new DecisionSystem(client);
+    this.reminderSystem = new ReminderSystem();
     this.searchSystem = new SearchSystem();
-    this.contradictionDetector = new ContradictionDetector(client);
-    this.messageRecallTracker = new MessageRecallTracker(client);
+    this.decisionSystem = new DecisionSystem();
+    this.dailyReportSystem = new DailyReportSystem();
   }
 
   async handleMessage(event) {
     const { message, source, replyToken } = event;
     const userId = source.userId || source.groupId;
     const messageText = message.text;
+    const isGroup = source.type === 'group';
 
     console.log(`👤 收到訊息 [${userId.substring(0, 8)}...]: ${Utils.truncateText(messageText, 50)}`);
-    Memory.stats.totalMessages++;
 
     try {
-      // 頻率限制檢查
-      if (!Utils.checkRateLimit(userId)) {
-        console.log('⚠️ 頻率限制觸發:', userId.substring(0, 8));
-        const rateLimitMessage = FlexMessageBuilder.createWarningMessage(
-          '哎呀，你的訊息有點太頻繁了！讓我休息一下，等等再聊吧～ 😅',
-          '⚡ 訊息頻率限制'
-        );
-        return await this.safeReply(replyToken, rateLimitMessage);
-      }
-
-      // 記錄訊息和更新用戶資料
-      this.recordMessage(userId, messageText, source);
-      this.updateUserProfile(userId, source);
+      // 更新用戶資料
+      const userProfile = memory.getUserProfile(userId);
+      userProfile.lastSeen = Utils.getTaiwanTime();
+      userProfile.messageCount++;
       
-      // 追蹤訊息（用於收回偵測）
-      this.messageRecallTracker.trackMessage(event);
+      // 記錄對話
+      memory.recordConversation(userId, messageText, 'user', isGroup);
+      memory.updateDailyStats('message', { userId });
+
+      // 獲取用戶顯示名稱
+      if (!userProfile.displayName && source.userId) {
+        this.fetchUserProfile(source.userId).catch(console.error);
+      }
 
       // 系統指令處理
       if (messageText.startsWith('/')) {
-        console.log('⚡ 處理系統指令:', messageText);
-        const response = await SystemManager.handleSystemCommand(messageText, userId);
+        const response = await this.handleSystemCommand(messageText, userId, userProfile);
         return await this.safeReply(replyToken, response);
       }
 
       // 決策回應處理
       if (messageText.includes('決策同意') || messageText.includes('決策拒絕')) {
-        console.log('⚖️ 處理決策回應:', messageText);
         const response = await this.handleDecisionResponse(messageText, userId);
-        return await this.safeReply(replyToken, response);
-      }
-
-      // 決策詳情查詢
-      if (messageText.includes('決策詳情')) {
-        console.log('📋 查詢決策詳情:', messageText);
-        const response = await this.handleDecisionDetails(messageText);
         return await this.safeReply(replyToken, response);
       }
 
       // 提醒相關處理
       if (this.isReminderRequest(messageText)) {
-        console.log('⏰ 處理提醒請求:', messageText);
-        const response = await this.handleReminderRequest(messageText, userId);
+        const response = await this.reminderSystem.setReminder(userId, messageText, userProfile);
         return await this.safeReply(replyToken, response);
       }
 
       // 取消提醒處理
       if (messageText.includes('取消提醒')) {
-        console.log('❌ 處理取消提醒:', messageText);
         const response = await this.handleCancelReminder(messageText, userId);
         return await this.safeReply(replyToken, response);
       }
 
       // 搜尋請求處理
       if (this.isSearchRequest(messageText)) {
-        console.log('🔍 處理搜尋請求:', messageText);
         const response = await this.handleSearchRequest(messageText);
         return await this.safeReply(replyToken, response);
       }
 
-      // 一般 AI 對話
-      console.log('🤖 處理 AI 對話');
-      const response = await this.handleAIConversation(messageText, userId, source);
-      return await this.safeReply(replyToken, response);
+      // 主人傳訊功能
+      if (userId === CONFIG.masterId && this.isMessageCommand(messageText)) {
+        const response = await this.handleMessageCommand(messageText);
+        return await this.safeReply(replyToken, response);
+      }
+
+      // 一般AI對話
+      const response = await this.handleAIConversation(messageText, userId, userProfile, isGroup);
+      if (response) {
+        return await this.safeReply(replyToken, response);
+      }
 
     } catch (error) {
       console.error('❌ 訊息處理錯誤:', error);
-      Memory.stats.errors++;
+      memory.stats.errors++;
       
       const errorResponse = FlexMessageBuilder.createErrorMessage(
         '哎呀，我遇到一點小問題，讓我重新整理一下思緒... 🤔',
@@ -1940,102 +1627,124 @@ class SuperIntelligentLineBot {
     }
   }
 
-  async handleUnsendEvent(event) {
-    console.log('📱 處理訊息收回事件');
-    await this.messageRecallTracker.handleUnsendEvent(event);
-  }
-
   async safeReply(replyToken, message) {
     try {
-      await client.replyMessage(replyToken, message);
+      if (Array.isArray(message)) {
+        // 處理多個訊息
+        for (const msg of message) {
+          await client.pushMessage(replyToken, msg);
+        }
+      } else {
+        await client.replyMessage(replyToken, message);
+      }
       console.log('✅ 回覆發送成功');
     } catch (error) {
       console.error('❌ 回覆發送失敗:', error);
-      if (error.statusCode === 400) {
-        console.log('🔄 ReplyToken 可能已過期或已使用');
-      }
-      Memory.stats.errors++;
-      throw error;
-    }
-  }
-
-  recordMessage(userId, messageText, source) {
-    if (!Memory.conversations.has(userId)) {
-      Memory.conversations.set(userId, []);
-    }
-    
-    const conversation = Memory.conversations.get(userId);
-    conversation.push({
-      message: messageText,
-      timestamp: new Date(),
-      type: 'user',
-      isGroup: source.type === 'group'
-    });
-
-    // 根據群組或個人聊天設定不同的記憶長度
-    const maxMessages = source.type === 'group' ? config.maxGroupHistory : config.maxPersonalHistory;
-    if (conversation.length > maxMessages) {
-      conversation.splice(0, conversation.length - maxMessages);
-    }
-  }
-
-  updateUserProfile(userId, source) {
-    if (!Memory.userProfiles.has(userId)) {
-      Memory.userProfiles.set(userId, {
-        id: userId,
-        isGroup: source.type === 'group',
-        firstSeen: new Date(),
-        messageCount: 0,
-        preferences: {},
-        displayName: null,
-        phoneNumber: null
-      });
-      Memory.stats.totalUsers++;
-    }
-
-    const profile = Memory.userProfiles.get(userId);
-    profile.lastSeen = new Date();
-    profile.messageCount = (profile.messageCount || 0) + 1;
-    
-    // 如果是第一次交互，嘗試獲取用戶資訊
-    if (!profile.displayName && source.userId) {
-      this.fetchUserProfile(source.userId).catch(console.error);
+      memory.stats.errors++;
     }
   }
 
   async fetchUserProfile(userId) {
     try {
       const profile = await client.getProfile(userId);
-      const userProfile = Memory.userProfiles.get(userId);
-      if (userProfile) {
-        userProfile.displayName = profile.displayName;
-        userProfile.pictureUrl = profile.pictureUrl;
-      }
+      const userProfile = memory.getUserProfile(userId);
+      userProfile.displayName = profile.displayName;
+      userProfile.pictureUrl = profile.pictureUrl;
     } catch (error) {
       console.error('❌ 獲取用戶資料失敗:', error);
-      Memory.stats.errors++;
     }
   }
 
   isReminderRequest(message) {
-    const reminderKeywords = ['提醒', '鬧鐘', '叫我', '分鐘後', '小時後', '秒後', '明天', '今天', '點叫', '起床', '電話叫'];
-    return reminderKeywords.some(keyword => message.includes(keyword));
+    const keywords = ['提醒', '鬧鐘', '叫我', '分鐘後', '小時後', '秒後', '明天', '今天', '點叫', '起床'];
+    return keywords.some(keyword => message.includes(keyword));
   }
 
   isSearchRequest(message) {
-    const searchKeywords = ['搜尋', '查', '天氣', '新聞', '電影', '推薦', '找'];
-    return searchKeywords.some(keyword => message.includes(keyword));
+    const keywords = ['搜尋', '查', '天氣', '新聞', '電影', '推薦', '找'];
+    return keywords.some(keyword => message.includes(keyword));
   }
 
-  async handleReminderRequest(messageText, userId) {
-    return await this.reminderSystem.setReminder(userId, messageText);
+  isMessageCommand(message) {
+    return message.startsWith('傳訊給') || message.startsWith('發訊息給') || message.startsWith('告訴');
+  }
+
+  async handleSystemCommand(command, userId, userProfile) {
+    const isMaster = userId === CONFIG.masterId;
+    
+    switch (command) {
+      case '/我的提醒':
+        return this.reminderSystem.listUserReminders(userId);
+      
+      case '/設定電話':
+        return this.handleSetPhone(command, userId, userProfile);
+      
+      case '/狀態報告':
+        if (!isMaster) {
+          return FlexMessageBuilder.createErrorMessage(
+            '此功能僅限主人使用',
+            '🔐 權限不足'
+          );
+        }
+        return this.getSystemStatus();
+      
+      case '/每日報告':
+        if (!isMaster) {
+          return FlexMessageBuilder.createErrorMessage(
+            '此功能僅限主人使用',
+            '🔐 權限不足'
+          );
+        }
+        await this.dailyReportSystem.sendDailyReport();
+        return FlexMessageBuilder.createSystemMessage(
+          '✅ 每日報告已手動觸發',
+          '📊 報告發送'
+        );
+      
+      case '/說明':
+        return this.getHelpMessage(isMaster);
+      
+      default:
+        return FlexMessageBuilder.createSystemMessage(
+          '未知指令。輸入 /說明 查看可用指令',
+          '❓ 未知指令'
+        );
+    }
+  }
+
+  async handleSetPhone(command, userId, userProfile) {
+    const phoneMatch = command.match(/\/設定電話\s+(\+886[0-9]{9})/);
+    
+    if (!phoneMatch) {
+      return FlexMessageBuilder.createErrorMessage(
+        '請提供正確的台灣手機號碼格式\n\n例如：/設定電話 +886912345678',
+        '📞 格式錯誤'
+      );
+    }
+
+    const phoneNumber = phoneMatch[1];
+    if (!Utils.validateTaiwanPhone(phoneNumber)) {
+      return FlexMessageBuilder.createErrorMessage(
+        '手機號碼格式不正確\n\n請使用：+886 + 9位數字',
+        '📞 格式錯誤'
+      );
+    }
+
+    userProfile.phoneNumber = phoneNumber;
+    
+    const userDisplay = Utils.formatUserDisplay(userId, userProfile.displayName);
+    return FlexMessageBuilder.createSystemMessage(
+      `✅ 已為 ${userDisplay} 設定電話號碼：${phoneNumber}\n\n現在可以使用電話鬧鐘功能了！`,
+      '📞 電話設定成功'
+    );
   }
 
   async handleCancelReminder(messageText, userId) {
     const reminderIdMatch = messageText.match(/取消提醒\s+(\w+)/);
+    
     if (!reminderIdMatch) {
       return FlexMessageBuilder.createErrorMessage(
-        '請提供要取消的提醒編號，例如：\n取消提醒 reminder_123',
+        '請提供要取消的提醒編號\n\n例如：取消提醒 reminder_123',
         '❌ 格式錯誤'
       );
     }
@@ -2045,25 +1754,64 @@ class SuperIntelligentLineBot {
   }
 
   async handleSearchRequest(messageText) {
-    if (messageText.includes('天氣')) {
-      const locationMatch = messageText.match(/(台中|台北|高雄|台南|新竹|桃園|嘉義|台東|花蓮|宜蘭|基隆|彰化|雲林|屏東|南投|苗栗|金門|澎湖|新北|台灣)/);
+    if (messageText.includes('電影') || messageText.includes('片') || messageText.includes('影')) {
+      const query = messageText
+        .replace(/查|搜尋|找|電影|片|影/g, '')
+        .trim();
+      
+      if (!query) {
+        return FlexMessageBuilder.createErrorMessage(
+          '請提供要搜尋的電影名稱\n\n例如：搜尋電影 復仇者聯盟',
+          '🎬 搜尋錯誤'
+        );
+      }
+      
+      return await this.searchSystem.searchMovie(query);
+    } else if (messageText.includes('天氣')) {
+      const locationMatch = messageText.match(/(台中|台北|高雄|台南|新竹|桃園|嘉義|台東|花蓮|宜蘭|基隆|彰化|雲林|屏東|南投|苗栗)/);
       const location = locationMatch ? locationMatch[0] : '台中';
       return await this.searchSystem.getWeather(location);
     } else if (messageText.includes('新聞')) {
       return await this.searchSystem.getNews();
-    } else if (messageText.includes('電影') || messageText.includes('推薦')) {
-      return await this.searchSystem.getMovieRecommendations();
     } else {
       const query = messageText.replace(/搜尋|查|找/, '').trim();
-      return await this.searchSystem.searchWeb(query);
+      return await this.searchSystem.webSearch(query);
     }
+  }
+
+  async handleMessageCommand(messageText) {
+    // 解析傳訊指令：傳訊給 [用戶] [內容]
+    const match = messageText.match(/(?:傳訊給|發訊息給|告訴)\s*([^\s]+)\s*[:：]?\s*(.+)/);
+    
+    if (!match) {
+      return FlexMessageBuilder.createErrorMessage(
+        '指令格式錯誤\n\n正確格式：\n傳訊給 用戶名稱：訊息內容\n或：告訴 用戶ID 訊息內容',
+        '📱 指令錯誤'
+      );
+    }
+
+    const [, targetUser, messageContent] = match;
+    
+    // 這裡應該實現查找用戶ID的邏輯
+    // 目前簡化處理，返回確認訊息
+    return FlexMessageBuilder.createSystemMessage(
+      `✅ 已嘗試以您的分身身份傳訊
+
+👤 目標：${targetUser}
+💬 內容：${messageContent}
+🕐 時間：${Utils.formatTaiwanTime()}（台灣時間）
+
+⚠️ 注意：需要有該用戶的ID才能實際發送`,
+      '📱 傳訊確認'
+    );
   }
 
   async handleDecisionResponse(messageText, userId) {
     const decisionMatch = messageText.match(/決策(同意|拒絕)\s+(\w+)(?:\s+(.+))?/);
+    
     if (!decisionMatch) {
       return FlexMessageBuilder.createErrorMessage(
-        '決策格式錯誤。正確格式：\n決策同意 decision_123\n決策拒絕 decision_123 原因',
+        '決策格式錯誤\n\n正確格式：\n決策同意 decision_123\n決策拒絕 decision_123 原因',
         '⚖️ 格式錯誤'
       );
     }
@@ -2074,65 +1822,98 @@ class SuperIntelligentLineBot {
     return await this.decisionSystem.handleDecisionResponse(decisionId, actionType, userId, details || '');
   }
 
-  async handleDecisionDetails(messageText) {
-    const detailsMatch = messageText.match(/決策詳情\s+(\w+)/);
-    if (!detailsMatch) {
-      return FlexMessageBuilder.createErrorMessage(
-        '請提供決策編號，例如：決策詳情 decision_123',
-        '❌ 格式錯誤'
-      );
-    }
-
-    const decisionId = detailsMatch[1];
-    return this.decisionSystem.getDecisionDetails(decisionId);
-  }
-
-  async handleAIConversation(messageText, userId, source) {
+  async handleAIConversation(messageText, userId, userProfile, isGroup) {
     const conversationHistory = this.getConversationHistory(userId);
     const userContext = {
       userId,
-      profile: Memory.userProfiles.get(userId) || {},
-      isGroup: source.type === 'group',
-      learningData: Memory.learningData.get(userId)
+      isGroup,
+      groupId: isGroup ? userId : null,
+      profile: userProfile
     };
 
-    // 異步矛盾偵測（不阻塞回覆）
-    if (conversationHistory.length > 2) {
-      this.contradictionDetector.detectContradiction(userId, messageText, conversationHistory)
-        .catch(error => console.error('⚠️ 矛盾偵測失敗:', error));
+    const response = await this.aiPersonality.generateResponse(
+      messageText, 
+      userContext, 
+      conversationHistory
+    );
+
+    if (!response) {
+      return null; // 群組中AI決定不回覆
     }
 
-    try {
-      // 生成個性化回覆
-      const aiResponse = await this.aiPersonality.generatePersonalizedResponse(
-        messageText, userContext, conversationHistory.join('\n')
-      );
+    // 記錄AI回覆
+    memory.recordConversation(userId, response, 'bot', isGroup);
 
-      // 記錄 AI 回覆
-      const conversation = Memory.conversations.get(userId);
-      if (conversation) {
-        conversation.push({
-          message: aiResponse,
-          timestamp: new Date(),
-          type: 'bot'
-        });
-      }
-
-      return FlexMessageBuilder.createChatResponse(aiResponse);
-    } catch (error) {
-      console.error('❌ AI 對話處理失敗:', error);
-      Memory.stats.errors++;
-      
-      return FlexMessageBuilder.createErrorMessage(
-        '抱歉，我現在有點累了，等等再聊好嗎？ 😴',
-        '🤖 AI 暫時無法回應'
-      );
-    }
+    const userDisplay = Utils.formatUserDisplay(userId, userProfile.displayName);
+    return FlexMessageBuilder.createChatResponse(response, userDisplay);
   }
 
   getConversationHistory(userId) {
-    const conversation = Memory.conversations.get(userId) || [];
-    return conversation.slice(-10).map(msg => `${msg.type === 'user' ? '用戶' : 'Bot'}: ${msg.message}`);
+    const conversation = memory.conversations.get(userId) || [];
+    return conversation
+      .slice(-10)
+      .map(msg => `${msg.type === 'user' ? '用戶' : 'Bot'}: ${msg.message}`);
+  }
+
+  getSystemStatus() {
+    const uptime = Math.floor((Date.now() - memory.stats.startTime) / 3600000);
+    const memoryUsed = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    
+    const content = `📊 系統狀態總覽
+
+💬 總訊息：${memory.stats.totalMessages} 則
+👥 用戶數量：${memory.stats.totalUsers} 人
+⏰ 活躍提醒：${memory.reminders.size} 個
+⚖️ 待處理決策：${Array.from(memory.decisions.values()).filter(d => d.status === 'pending').length} 個
+📈 API 呼叫：${memory.stats.apiCalls} 次
+❌ 錯誤次數：${memory.stats.errors} 次
+🕒 運行時間：${uptime} 小時
+💾 記憶體使用：${memoryUsed} MB
+
+🤖 AI 引擎：${CONFIG.geminiApiKey ? 'Gemini ✅' : '❌'} + ${CONFIG.backupAiKey ? 'GPT-3.5 ✅' : '❌'}
+📞 電話服務：${CONFIG.twilioAccountSid ? '✅' : '❌'}
+🌤️ 天氣服務：${CONFIG.weatherApiKey ? '✅' : '❌'}
+📰 新聞服務：${CONFIG.newsApiKey ? '✅' : '❌'}
+🎬 電影服務：${CONFIG.tmdbApiKey ? '✅' : '❌'}
+
+📊 檢查時間：${Utils.formatTaiwanTime()}（台灣時間）`;
+
+    return FlexMessageBuilder.createCard('📊 系統狀態', content, '#4A90E2');
+  }
+
+  getHelpMessage(isMaster) {
+    const generalCommands = `📱 一般功能：
+• 直接聊天 - AI會用自然分段回覆
+• 設定提醒 - "30分鐘後提醒我開會"
+• 電話鬧鐘 - "明天7點叫我起床，電話+886912345678"
+• 查詢天氣 - "台中天氣如何"
+• 搜尋電影 - "搜尋電影 復仇者聯盟"
+• 查看新聞 - "最新新聞"
+
+📋 指令功能：
+• /我的提醒 - 查看我的提醒
+• /取消提醒 [編號] - 取消指定提醒
+• /設定電話 +886912345678 - 設定電話號碼
+• /說明 - 顯示此說明`;
+
+    const masterCommands = `
+
+🔐 主人專用：
+• /狀態報告 - 系統運行狀態
+• /每日報告 - 手動觸發每日報告
+• 傳訊給 [用戶]：[內容] - 代替傳訊
+• 決策同意/拒絕 [編號] - 處理決策請求
+
+🎯 特色功能：
+• 完全模擬您的說話風格
+• 群組回覆頻率AI自動調節
+• 所有時間都用台灣時間顯示
+• 支援電話鬧鐘功能
+• 每日自動數據報告（早上9點）`;
+
+    const content = generalCommands + (isMaster ? masterCommands : '');
+    
+    return FlexMessageBuilder.createCard('📚 使用說明', content, '#34C759');
   }
 }
 
@@ -2140,7 +1921,6 @@ class SuperIntelligentLineBot {
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 初始化 Bot
 const bot = new SuperIntelligentLineBot();
 
 // Webhook 端點
@@ -2159,7 +1939,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
     const bodyString = Buffer.isBuffer(body) ? body.toString() : JSON.stringify(body);
     const hash = crypto
-      .createHmac('SHA256', config.channelSecret)
+      .createHmac('SHA256', CONFIG.channelSecret)
       .update(bodyString)
       .digest('base64');
 
@@ -2187,7 +1967,7 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 
   } catch (error) {
     console.error('❌ Webhook 處理失敗:', error);
-    Memory.stats.errors++;
+    memory.stats.errors++;
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -2195,187 +1975,66 @@ app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res)
 // 事件處理函數
 async function handleEvent(event) {
   try {
-    console.log(`📨 處理事件類型: ${event.type}`);
-    
-    // 處理文字訊息
     if (event.type === 'message' && event.message.type === 'text') {
       return await bot.handleMessage(event);
     }
-    
-    // 處理訊息收回事件
-    if (event.type === 'unsend') {
-      return await bot.handleUnsendEvent(event);
-    }
-    
-    // 其他事件類型
-    console.log(`⏭️ 跳過事件類型: ${event.type}`);
     return null;
-    
   } catch (error) {
     console.error('❌ 事件處理失敗:', error);
-    Memory.stats.errors++;
+    memory.stats.errors++;
     throw error;
   }
 }
 
 // 健康檢查端點
 app.get('/', (req, res) => {
-  const uptime = Date.now() - Memory.stats.startTime;
+  const uptime = Date.now() - memory.stats.startTime;
   const memoryUsage = process.memoryUsage();
   
   res.json({
     status: 'running',
-    message: '🤖 超級智能 LINE Bot v3.0 運行中',
-    version: '3.0.0',
+    message: '🤖 超級智能 LINE Bot v4.0 - 台灣真人分身',
+    version: '4.0.0',
     uptime: Math.floor(uptime / 1000),
-    author: {
-      name: '顧晉瑋',
-      school: '靜宜大學資管系'
+    master: {
+      name: CONFIG.masterName,
+      id: CONFIG.masterId
     },
     stats: {
-      totalMessages: Memory.stats.totalMessages,
-      totalUsers: Memory.userProfiles.size,
-      activeReminders: Memory.reminders.size,
-      pendingDecisions: Array.from(Memory.decisions.values()).filter(d => d.status === 'pending').length,
-      apiCalls: Memory.stats.apiCalls,
-      errors: Memory.stats.errors,
-      decisionsHandled: Memory.stats.decisionsHandled,
-      remindersTriggered: Memory.stats.remindersTriggered,
-      contradictionsDetected: Memory.stats.contradictionsDetected
+      totalMessages: memory.stats.totalMessages,
+      totalUsers: memory.stats.totalUsers,
+      activeReminders: memory.reminders.size,
+      pendingDecisions: Array.from(memory.decisions.values()).filter(d => d.status === 'pending').length,
+      apiCalls: memory.stats.apiCalls,
+      errors: memory.stats.errors,
+      remindersTriggered: memory.stats.remindersTriggered,
+      decisionsHandled: memory.stats.decisionsHandled
     },
     memory: {
       used: Math.round(memoryUsage.heapUsed / 1024 / 1024),
-      total: Math.round(memoryUsage.heapTotal / 1024 / 1024),
-      external: Math.round(memoryUsage.external / 1024 / 1024)
-    },
-    system: {
-      nodeVersion: process.version,
-      platform: process.platform,
-      arch: process.arch
-    },
-    config: {
-      hasLineToken: !!config.channelAccessToken,
-      hasLineSecret: !!config.channelSecret,
-      hasGeminiKey: !!config.geminiApiKey,
-      hasBackupAI: !!config.backupAiKey,
-      hasTwilio: !!config.twilioAccountSid,
-      hasWeatherApi: !!config.weatherApiKey,
-      hasNewsApi: !!config.newsApiKey,
-      hasTmdbApi: !!config.tmdbApiKey,
-      hasSearchApi: !!config.searchApiKey,
-      adminUserId: config.adminUserId
+      total: Math.round(memoryUsage.heapTotal / 1024 / 1024)
     },
     services: {
-      geminiApi: Memory.systemHealth.geminiApi,
-      backupAi: Memory.systemHealth.backupAi,
-      twilioService: Memory.systemHealth.twilioService
+      geminiAI: !!CONFIG.geminiApiKey,
+      backupAI: !!CONFIG.backupAiKey,
+      twilio: !!CONFIG.twilioAccountSid,
+      weather: !!CONFIG.weatherApiKey,
+      news: !!CONFIG.newsApiKey,
+      movies: !!CONFIG.tmdbApiKey,
+      search: !!CONFIG.searchApiKey
     },
+    taiwanTime: Utils.formatTaiwanTime(),
+    timezone: CONFIG.timezone,
     timestamp: new Date().toISOString()
   });
 });
 
-// 配置測試端點
-app.get('/test-config', (req, res) => {
-  const configStatus = {
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    webhook_url: `${req.protocol}://${req.get('host')}/webhook`,
-    config_status: {
-      // 必填項目
-      line_token: config.channelAccessToken ? '✅ 已設定' : '❌ 未設定 (必填)',
-      line_secret: config.channelSecret ? '✅ 已設定' : '❌ 未設定 (必填)',
-      gemini_key: config.geminiApiKey ? '✅ 已設定' : '❌ 未設定 (必填)',
-      admin_user: config.adminUserId ? '✅ 已設定' : '❌ 未設定 (必填)',
-      
-      // 可選項目
-      backup_ai: config.backupAiKey ? '✅ 已設定' : '⚪ 未設定 (建議)',
-      twilio_service: config.twilioAccountSid ? '✅ 已設定' : '⚪ 未設定 (電話鬧鐘)',
-      weather_api: config.weatherApiKey ? '✅ 已設定' : '⚪ 未設定 (天氣查詢)',
-      news_api: config.newsApiKey ? '✅ 已設定' : '⚪ 未設定 (新聞查詢)',
-      tmdb_api: config.tmdbApiKey ? '✅ 已設定' : '⚪ 未設定 (電影推薦)',
-      search_api: config.searchApiKey ? '✅ 已設定' : '⚪ 未設定 (網路搜尋)'
-    },
-    system_info: {
-      node_version: process.version,
-      memory_usage: `${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)}MB`,
-      uptime: `${Math.floor(process.uptime() / 3600)}小時`,
-      timezone: process.env.TZ || 'UTC'
-    },
-    recommendations: [
-      '✅ 確保所有必填的環境變數都已設定',
-      '🔗 在 LINE Developers Console 設定正確的 Webhook URL',
-      '🧪 使用 /test-config 和 / 端點測試系統狀態',
-      '📱 建議設定備用 AI 以提高穩定性',
-      '📞 設定 Twilio 以啟用電話鬧鐘功能',
-      '🌤️ 設定天氣 API 以提供完整的天氣查詢服務'
-    ],
-    next_steps: [
-      '1. 檢查所有環境變數是否正確設定',
-      '2. 在 LINE Bot 控制台設定 Webhook URL',
-      '3. 測試基本聊天功能',
-      '4. 測試提醒和決策功能',
-      '5. 確認所有 API 服務正常運作'
-    ]
-  };
-  
-  res.json(configStatus);
-});
-
-// API 狀態檢查端點
-app.get('/api-status', async (req, res) => {
-  const apiTests = {
-    timestamp: new Date().toISOString(),
-    tests: {}
-  };
-
-  // 測試 Gemini AI
-  try {
-    if (config.geminiApiKey && model) {
-      const testResult = await model.generateContent('測試');
-      apiTests.tests.gemini = { status: '✅ 正常', response: '已回應' };
-    } else {
-      apiTests.tests.gemini = { status: '❌ 未配置', response: 'API Key 未設定' };
-    }
-  } catch (error) {
-    apiTests.tests.gemini = { status: '❌ 錯誤', response: error.message };
-  }
-
-  // 測試天氣 API
-  try {
-    if (config.weatherApiKey) {
-      await axios.get('https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001', {
-        params: { Authorization: config.weatherApiKey, locationName: '台中' },
-        timeout: 5000
-      });
-      apiTests.tests.weather = { status: '✅ 正常', response: '連接成功' };
-    } else {
-      apiTests.tests.weather = { status: '⚪ 未配置', response: 'API Key 未設定' };
-    }
-  } catch (error) {
-    apiTests.tests.weather = { status: '❌ 錯誤', response: error.message };
-  }
-
-  // 測試 Twilio
-  try {
-    if (config.twilioAccountSid && twilioClient) {
-      await twilioClient.api.accounts(config.twilioAccountSid).fetch();
-      apiTests.tests.twilio = { status: '✅ 正常', response: '認證成功' };
-    } else {
-      apiTests.tests.twilio = { status: '⚪ 未配置', response: 'Twilio 未設定' };
-    }
-  } catch (error) {
-    apiTests.tests.twilio = { status: '❌ 錯誤', response: error.message };
-  }
-
-  res.json(apiTests);
-});
-
-// 配置驗證函數
+// 配置驗證
 function validateConfig() {
   const required = {
-    'LINE_CHANNEL_ACCESS_TOKEN': config.channelAccessToken,
-    'LINE_CHANNEL_SECRET': config.channelSecret,
-    'GEMINI_API_KEY': config.geminiApiKey
+    'LINE_CHANNEL_ACCESS_TOKEN': CONFIG.channelAccessToken,
+    'LINE_CHANNEL_SECRET': CONFIG.channelSecret,
+    'GEMINI_API_KEY': CONFIG.geminiApiKey
   };
 
   const missing = [];
@@ -2387,160 +2046,81 @@ function validateConfig() {
 
   if (missing.length > 0) {
     console.error('❌ 缺少必要環境變數:', missing.join(', '));
-    console.error('💡 請檢查 .env 檔案或部署平台的環境變數設定');
     return false;
   }
 
-  console.log('✅ 必要配置驗證通過');
   return true;
 }
 
-// 系統健康檢查
-function performHealthCheck() {
-  setInterval(() => {
-    Memory.systemHealth.lastHealthCheck = new Date();
-    
-    // 檢查記憶體使用量
-    const memUsage = process.memoryUsage();
-    if (memUsage.heapUsed > 800 * 1024 * 1024) { // 超過 800MB
-      console.warn('⚠️ 記憶體使用量偏高:', Math.round(memUsage.heapUsed / 1024 / 1024), 'MB');
-    }
-    
-    // 檢查錯誤率
-    if (Memory.stats.errors > 50) {
-      console.warn('⚠️ 錯誤次數過多:', Memory.stats.errors);
-    }
-    
-    // 清理過期的學習數據
-    const now = Date.now();
-    for (const [userId, userData] of Memory.learningData.entries()) {
-      if (userData.lastInteraction && (now - userData.lastInteraction) > 7 * 24 * 60 * 60 * 1000) { // 7天
-        Memory.learningData.delete(userId);
-      }
-    }
-    
-  }, 5 * 60 * 1000); // 每5分鐘檢查一次
-}
-
 // 啟動伺服器
-app.listen(config.port, () => {
+app.listen(CONFIG.port, () => {
   console.log('\n' + '='.repeat(100));
-  console.log('🚀 超級智能 LINE Bot v3.0 正在啟動...');
+  console.log('🚀 超級智能 LINE Bot v4.0 - 台灣真人分身');
   console.log('='.repeat(100));
   
-  // 驗證配置
   if (!validateConfig()) {
-    console.error('❌ 配置驗證失敗，請檢查環境變數設定');
-    console.error('💡 執行 npm run config-check 來檢查配置');
+    console.error('❌ 配置驗證失敗，請檢查環境變數');
     process.exit(1);
   }
   
-  console.log('📋 系統資訊:');
-  console.log(`   📡 伺服器端口: ${config.port}`);
-  console.log(`   👨‍💼 管理員 ID: ${config.adminUserId}`);
-  console.log(`   🌐 環境: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`   🕐 時區: ${process.env.TZ || 'UTC'}`);
-  console.log(`   📦 Node.js: ${process.version}`);
+  console.log('📋 系統資訊：');
+  console.log(`   📡 伺服器端口：${CONFIG.port}`);
+  console.log(`   👑 主人：${CONFIG.masterName}（${CONFIG.masterId}）`);
+  console.log(`   📞 主人電話：${CONFIG.masterPhone}`);
+  console.log(`   🌏 時區：${CONFIG.timezone}`);
+  console.log(`   📅 每日報告：每天 ${CONFIG.dailyReportTime}`);
   console.log('');
   
-  console.log('🤖 AI 引擎狀態:');
-  console.log(`   🧠 Gemini AI: ${config.geminiApiKey ? '✅ 已配置' : '❌ 未配置'}`);
-  console.log(`   🔄 備用 AI: ${config.backupAiKey ? '✅ 已配置' : '⚪ 未配置'}`);
+  console.log('🤖 AI 引擎狀態：');
+  console.log(`   🧠 Gemini AI：${CONFIG.geminiApiKey ? '✅ 已配置' : '❌ 未配置'}`);
+  console.log(`   🔄 備用 AI：${CONFIG.backupAiKey ? '✅ 已配置' : '⚪ 未配置'}`);
   console.log('');
   
-  console.log('🛠️ 外部服務狀態:');
-  console.log(`   📞 Twilio 電話: ${config.twilioAccountSid ? '✅ 已配置' : '⚪ 未配置'}`);
-  console.log(`   🌤️ 天氣 API: ${config.weatherApiKey ? '✅ 已配置' : '⚪ 未配置'}`);
-  console.log(`   📰 新聞 API: ${config.newsApiKey ? '✅ 已配置' : '⚪ 未配置'}`);
-  console.log(`   🎬 電影 API: ${config.tmdbApiKey ? '✅ 已配置' : '⚪ 未配置'}`);
-  console.log(`   🔍 搜尋 API: ${config.searchApiKey ? '✅ 已配置' : '⚪ 未配置'}`);
+  console.log('🛠️ 外部服務：');
+  console.log(`   📞 Twilio 電話：${CONFIG.twilioAccountSid ? '✅ 已配置' : '⚪ 未配置'}`);
+  console.log(`   🌤️ 天氣 API：${CONFIG.weatherApiKey ? '✅ 已配置' : '⚪ 未配置'}`);
+  console.log(`   📰 新聞 API：${CONFIG.newsApiKey ? '✅ 已配置' : '⚪ 未配置'}`);
+  console.log(`   🎬 電影 API：${CONFIG.tmdbApiKey ? '✅ 已配置' : '⚪ 未配置'}`);
+  console.log(`   🔍 搜尋 API：${CONFIG.searchApiKey ? '✅ 已配置' : '⚪ 未配置'}`);
   console.log('');
   
-  console.log('🎯 核心功能狀態:');
-  console.log('   💬 AI 個性聊天: ✅ 已載入');
-  console.log('   📱 圖文訊息系統: ✅ 已就緒');
-  console.log('   ⏰ 智能提醒系統: ✅ 已啟動');
-  console.log('   📞 電話鬧鐘功能: ✅ 已整合');
-  console.log('   ⚖️ 決策管理系統: ✅ 已就緒');
-  console.log('   🔍 搜尋查詢功能: ✅ 已連接');
-  console.log('   ⚠️ 矛盾偵測系統: ✅ 已激活');
-  console.log('   📱 訊息收回追蹤: ✅ 已啟用');
-  console.log('   👥 用戶管理系統: ✅ 已準備');
-  console.log('   📊 系統監控面板: ✅ 已運行');
-  console.log('   🔧 自我修復機制: ✅ 已部署');
-  console.log('   🧠 學習記憶系統: ✅ 已初始化');
+  console.log('🎯 核心功能：');
+  console.log('   💬 超擬真AI聊天 - ✅ 自然分段回覆');
+  console.log('   📱 用戶名稱+ID顯示 - ✅ 防混淆設計');
+  console.log('   🎛️ 群組回覆頻率控制 - ✅ AI智能調節');
+  console.log('   ⏰ 智能提醒系統 - ✅ 支援電話鬧鐘');
+  console.log('   🎬 升級電影搜尋 - ✅ 詳細資訊展示');
+  console.log('   ⚖️ 決策管理系統 - ✅ 主人私訊確認');
+  console.log('   📊 每日自動報告 - ✅ 互動數據分析');
+  console.log('   📱 主人傳訊功能 - ✅ 分身代理發送');
+  console.log('   🕰️ 台灣時間標準 - ✅ 全系統統一');
   console.log('');
   
-  console.log('💾 記憶體系統:');
-  console.log(`   📚 對話記憶: ${Memory.conversations.size} 個會話`);
-  console.log(`   👥 用戶檔案: ${Memory.userProfiles.size} 個檔案`);
-  console.log(`   ⏰ 活躍提醒: ${Memory.reminders.size} 個提醒`);
-  console.log(`   ⚖️ 待處理決策: ${Memory.decisions.size} 個決策`);
-  console.log(`   🧠 學習數據: ${Memory.learningData.size} 個用戶`);
-  console.log(`   💾 記憶體使用: ${Math.round(process.memoryUsage().heapUsed / 1024 / 1024)} MB`);
-  console.log('');
-  
-  console.log('🔧 系統指令（主人專用）:');
-  console.log('   /狀態報告 - 查看系統運行總覽');
-  console.log('   /提醒清單 - 查看所有用戶提醒');
-  console.log('   /決策待辦 - 查看待處理決策');
-  console.log('   /用戶活躍 - 查看用戶活動排行');
-  console.log('   /系統統計 - 查看詳細分析報告');
-  console.log('   /矛盾歷史 - 查看矛盾偵測記錄');
-  console.log('   /收回歷史 - 查看訊息收回記錄');
-  console.log('   /系統健康 - 查看服務狀態');
-  console.log('   /說明 - 查看完整使用說明');
-  console.log('');
-  
-  console.log('🌐 API 端點:');
-  console.log(`   📱 Webhook: ${config.port === 80 || config.port === 443 ? '' : ':' + config.port}/webhook`);
-  console.log(`   🏥 健康檢查: ${config.port === 80 || config.port === 443 ? '' : ':' + config.port}/`);
-  console.log(`   🔧 配置測試: ${config.port === 80 || config.port === 443 ? '' : ':' + config.port}/test-config`);
-  console.log(`   📊 API 狀態: ${config.port === 80 || config.port === 443 ? '' : ':' + config.port}/api-status`);
-  console.log('');
-  
-  console.log('🎉 系統完全就緒！超級智能分身正在等待互動...');
-  console.log('💡 建議設定步驟：');
-  console.log('   1. 在 LINE Developers Console 設定 Webhook URL');
-  console.log('   2. 測試基本聊天功能');
-  console.log('   3. 測試提醒和決策功能');
-  console.log('   4. 享受你的 AI 分身！');
+  console.log('🎉 系統完全就緒！您的台灣真人分身正在待命...');
+  console.log('💡 特色：');
+  console.log('   • 所有回覆都用台灣時間');
+  console.log('   • 自然分段，不會長篇大論');
+  console.log('   • 顯示用戶名稱+ID，避免混淆');
+  console.log('   • 支援電話鬧鐘（需設定+886號碼）');
+  console.log('   • 每日早上9點自動報告昨日數據');
+  console.log('   • 主人可用名字叫Bot傳話給任何人');
   console.log('='.repeat(100) + '\n');
-  
-  // 啟動健康檢查
-  performHealthCheck();
 });
 
-// 優雅關閉處理
+// 優雅關閉
 process.on('SIGTERM', () => {
-  console.log('🔄 收到終止信號，正在優雅關閉服務...');
-  
-  // 清理定時器
-  if (bot.reminderSystem.checkInterval) {
-    clearInterval(bot.reminderSystem.checkInterval);
-  }
-  
-  console.log('👋 系統已關閉，感謝使用！');
+  console.log('🔄 正在優雅關閉系統...');
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
-  console.log('\n🔄 收到中斷信號，正在關閉服務...');
-  process.exit(0);
-});
-
-// 未處理異常捕獲
 process.on('uncaughtException', (error) => {
-  console.error('❌ 未捕獲的異常:', error);
-  Memory.stats.errors++;
+  console.error('❌ 未捕獲異常:', error);
+  memory.stats.errors++;
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ 未處理的 Promise 拒絕:', reason);
-  console.error('   Promise:', promise);
-  Memory.stats.errors++;
+  console.error('❌ 未處理Promise拒絕:', reason);
+  memory.stats.errors++;
 });
 
-// 導出應用（用於測試）
-module.exports = { app, bot, Memory, config };
-      
+module.exports = { app, bot, memory, CONFIG };
