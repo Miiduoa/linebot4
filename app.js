@@ -15,8 +15,32 @@ const config = {
   backupAiKey: process.env.BACKUP_AI_KEY,
   backupAiUrl: process.env.BACKUP_AI_URL,
   adminUserId: process.env.ADMIN_USER_ID || 'demo326',
-  port: process.env.PORT || 3000
+  port: process.env.PORT || 3000,
+  // 新增超時和重試設定
+  apiTimeout: 10000, // 10秒超時
+  maxRetries: 3,
+  rateLimitWindow: 60000, // 1分鐘
+  maxRequestsPerWindow: 30
 };
+
+// 請求限制器
+const rateLimiter = new Map();
+
+function checkRateLimit(userId) {
+  const now = Date.now();
+  const userRequests = rateLimiter.get(userId) || [];
+  
+  // 清除過期請求
+  const validRequests = userRequests.filter(time => now - time < config.rateLimitWindow);
+  
+  if (validRequests.length >= config.maxRequestsPerWindow) {
+    return false;
+  }
+  
+  validRequests.push(now);
+  rateLimiter.set(userId, validRequests);
+  return true;
+}
 
 // LINE Bot 客戶端初始化
 const client = new line.Client(config);
@@ -78,22 +102,84 @@ class AIPersonalitySystem {
 `;
 
     try {
+      console.log('🤖 使用 Gemini AI 生成回覆...');
       const result = await model.generateContent(personalityPrompt);
-      return result.response.text();
+      const response = result.response.text();
+      console.log('✅ Gemini AI 回覆成功');
+      return response;
     } catch (error) {
-      return await this.fallbackResponse(message);
+      console.error('❌ Gemini AI 失敗:', error);
+      console.log('🔄 嘗試備用 AI...');
+      
+      try {
+        return await this.useBackupAI(message, userContext);
+      } catch (backupError) {
+        console.error('❌ 備用 AI 也失敗:', backupError);
+        return await this.fallbackResponse(message);
+      }
     }
   }
 
+  async useBackupAI(message, userContext) {
+    if (!config.backupAiKey || !config.backupAiUrl) {
+      throw new Error('備用 AI 未配置');
+    }
+
+    const response = await axios.post(`${config.backupAiUrl}/chat/completions`, {
+      model: 'gpt-3.5-turbo',
+      messages: [
+        {
+          role: 'system',
+          content: `你是顧晉瑋的AI分身。語言風格：${this.ownerPersonality.language_style}。要完全模擬他的說話方式和個性。`
+        },
+        {
+          role: 'user',
+          content: message
+        }
+      ],
+      max_tokens: 150,
+      temperature: 0.8
+    }, {
+      headers: {
+        'Authorization': `Bearer ${config.backupAiKey}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    console.log('✅ 備用 AI 回覆成功');
+    return response.data.choices[0].message.content;
+  }
+
   async fallbackResponse(message) {
-    // 備用回應邏輯
-    const responses = [
-      "哈哈，這個問題很有趣欸！我來想想...",
-      "對啊，這確實需要好好思考一下",
-      "欸，這讓我想到一個類似的情況...",
-      "有道理！不過我覺得還可以從另一個角度看"
-    ];
-    return responses[Math.floor(Math.random() * responses.length)];
+    console.log('🆘 使用離線回應模式');
+    
+    // 根據關鍵詞提供智能回應
+    const responses = {
+      greeting: ["哈囉！有什麼我可以幫你的嗎？", "嗨！今天過得怎麼樣？", "欸，你好！"],
+      tech: ["這個技術問題很有趣欸！讓我想想...", "技術方面的話，我覺得可以這樣考慮...", "這個問題確實需要仔細思考一下"],
+      question: ["這個問題很好欸！", "讓我想想怎麼回答比較好...", "這確實是個值得討論的問題"],
+      thanks: ["不客氣啦！", "哈哈，應該的！", "很高興能幫到你！"],
+      default: ["有意思！", "我想想怎麼回應比較好...", "這個話題挺有趣的", "確實是這樣呢"]
+    };
+
+    // 簡單的關鍵詞匹配
+    const lowerMessage = message.toLowerCase();
+    
+    if (lowerMessage.includes('你好') || lowerMessage.includes('哈囉') || lowerMessage.includes('嗨')) {
+      return this.randomChoice(responses.greeting);
+    } else if (lowerMessage.includes('程式') || lowerMessage.includes('技術') || lowerMessage.includes('代碼')) {
+      return this.randomChoice(responses.tech);
+    } else if (lowerMessage.includes('謝謝') || lowerMessage.includes('感謝')) {
+      return this.randomChoice(responses.thanks);
+    } else if (lowerMessage.includes('?') || lowerMessage.includes('？') || lowerMessage.includes('怎麼')) {
+      return this.randomChoice(responses.question);
+    } else {
+      return this.randomChoice(responses.default);
+    }
+  }
+
+  randomChoice(array) {
+    return array[Math.floor(Math.random() * array.length)];
   }
 }
 
@@ -773,6 +859,8 @@ class MainBot {
     const userId = source.userId || source.groupId;
     const messageText = message.text;
 
+    console.log(`👤 用戶 ${userId} 發送訊息: ${messageText}`);
+
     try {
       // 記錄訊息到歷史
       this.recordMessage(userId, messageText);
@@ -782,34 +870,40 @@ class MainBot {
 
       // 系統指令處理
       if (messageText.startsWith('/')) {
+        console.log('⚡ 處理系統指令:', messageText);
         const response = await SystemManagementSystem.handleSystemCommand(messageText, userId);
-        return await client.replyMessage(replyToken, response);
+        return await this.safeReply(replyToken, response);
       }
 
       // 決策回應處理
       if (messageText.includes('決策同意') || messageText.includes('決策拒絕')) {
+        console.log('⚖️ 處理決策回應:', messageText);
         const response = await this.handleDecisionResponse(messageText, userId);
-        return await client.replyMessage(replyToken, response);
+        return await this.safeReply(replyToken, response);
       }
 
       // 提醒設定處理
       if (this.isReminderRequest(messageText)) {
+        console.log('⏰ 處理提醒請求:', messageText);
         const response = await this.handleReminderRequest(messageText, userId);
-        return await client.replyMessage(replyToken, response);
+        return await this.safeReply(replyToken, response);
       }
 
       // 搜尋請求處理
       if (messageText.includes('搜尋') || messageText.includes('查') || messageText.includes('天氣')) {
+        console.log('🔍 處理搜尋請求:', messageText);
         const response = await this.handleSearchRequest(messageText);
-        return await client.replyMessage(replyToken, response);
+        return await this.safeReply(replyToken, response);
       }
 
       // 一般AI對話
+      console.log('🤖 處理AI對話');
       const conversationHistory = this.getConversationHistory(userId);
       const userContext = globalMemory.userProfiles.get(userId) || {};
 
-      // 矛盾偵測
-      await this.contradictionSystem.detectContradiction(userId, messageText, conversationHistory);
+      // 矛盾偵測（異步處理，不阻塞回覆）
+      this.contradictionSystem.detectContradiction(userId, messageText, conversationHistory)
+        .catch(error => console.error('⚠️ 矛盾偵測失敗:', error));
 
       // 生成個性化回覆
       const aiResponse = await this.aiPersonality.generatePersonalizedResponse(
@@ -817,15 +911,34 @@ class MainBot {
       );
 
       const flexResponse = FlexMessageSystem.createChatResponse(aiResponse);
-      await client.replyMessage(replyToken, flexResponse);
+      return await this.safeReply(replyToken, flexResponse);
 
     } catch (error) {
-      console.error('訊息處理錯誤:', error);
+      console.error('❌ 訊息處理錯誤:', error);
+      
       const errorResponse = FlexMessageSystem.createChatResponse(
         "哎呀，我遇到一點小問題，讓我重新整理一下思緒...",
         "🤖 系統提示"
       );
-      await client.replyMessage(replyToken, errorResponse);
+      return await this.safeReply(replyToken, errorResponse);
+    }
+  }
+
+  // 安全回覆方法
+  async safeReply(replyToken, message) {
+    try {
+      console.log('📤 發送回覆...');
+      await client.replyMessage(replyToken, message);
+      console.log('✅ 回覆發送成功');
+    } catch (error) {
+      console.error('❌ 回覆發送失敗:', error);
+      
+      // 如果是因為 replyToken 過期，嘗試其他方式
+      if (error.statusCode === 400) {
+        console.log('🔄 ReplyToken 可能已過期，跳過回覆');
+      }
+      
+      throw error;
     }
   }
 
@@ -920,47 +1033,265 @@ class MainBot {
 // ==================== 初始化和啟動 ====================
 const bot = new MainBot();
 
-// Express 設定
+// Express 設定 - 修復簽章驗證問題
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Webhook 端點
-app.post('/webhook', line.middleware(config), (req, res) => {
-  Promise.all(req.body.events.map(handleEvent))
-    .then(result => res.json(result))
-    .catch(err => {
-      console.error('Webhook錯誤:', err);
-      res.status(500).end();
-    });
+// 修復簽章驗證的 Webhook 端點
+app.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+  console.log('📨 收到 Webhook 請求');
+  
+  try {
+    // 手動驗證簽章
+    const signature = req.get('X-Line-Signature');
+    const body = req.body;
+    
+    if (!signature) {
+      console.error('❌ 缺少 X-Line-Signature header');
+      return res.status(401).send('Unauthorized');
+    }
+
+    // 驗證簽章
+    const bodyString = Buffer.isBuffer(body) ? body.toString() : JSON.stringify(body);
+    
+    const hash = crypto
+      .createHmac('SHA256', config.channelSecret)
+      .update(bodyString)
+      .digest('base64');
+
+    if (hash !== signature) {
+      console.error('❌ 簽章驗證失敗');
+      console.error('🔍 檢查 LINE_CHANNEL_SECRET 是否正確');
+      return res.status(401).send('Unauthorized');
+    }
+
+    console.log('✅ 簽章驗證成功');
+
+    // 解析請求內容
+    let events;
+    try {
+      const parsedBody = Buffer.isBuffer(body) ? JSON.parse(body.toString()) : body;
+      events = parsedBody.events || [];
+      console.log('📊 收到事件數量:', events.length);
+    } catch (error) {
+      console.error('❌ JSON 解析失敗:', error);
+      return res.status(400).send('Bad Request');
+    }
+
+    // 處理事件
+    Promise.all(events.map(handleEvent))
+      .then(result => {
+        console.log('✅ 所有事件處理完成');
+        res.json({ success: true, processed: result.length });
+      })
+      .catch(err => {
+        console.error('❌ 事件處理批次失敗:', err);
+        res.status(200).json({ success: false, error: err.message });
+      });
+      
+  } catch (error) {
+    console.error('❌ Webhook 處理失敗:', error);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
 });
 
-// 事件處理
+// 事件處理 - 增強錯誤處理和日誌
 async function handleEvent(event) {
-  if (event.type !== 'message' || event.message.type !== 'text') {
+  console.log('📨 收到事件:', event.type);
+  
+  try {
+    // 只處理文字訊息
+    if (event.type !== 'message') {
+      console.log('⏭️ 跳過非訊息事件:', event.type);
+      return Promise.resolve(null);
+    }
+
+    if (event.message.type !== 'text') {
+      console.log('⏭️ 跳過非文字訊息:', event.message.type);
+      return Promise.resolve(null);
+    }
+
+    // 頻率限制檢查
+    const userId = event.source.userId || event.source.groupId;
+    if (!checkRateLimit(userId)) {
+      console.log('⚠️ 頻率限制觸發:', userId);
+      
+      const rateLimitResponse = FlexMessageSystem.createChatResponse(
+        "哎呀，你的訊息有點太頻繁了！讓我休息一下，等等再聊吧～",
+        "⚡ 頻率限制"
+      );
+      
+      if (event.replyToken) {
+        await client.replyMessage(event.replyToken, rateLimitResponse);
+      }
+      return Promise.resolve(null);
+    }
+
+    console.log('✅ 處理文字訊息:', event.message.text);
+    return await bot.handleMessage(event);
+    
+  } catch (error) {
+    console.error('❌ 事件處理失敗:', error);
+    
+    // 嘗試發送錯誤回覆
+    try {
+      const errorResponse = FlexMessageSystem.createChatResponse(
+        "哎呀，我遇到一點小問題，讓我重新整理一下思緒...",
+        "🤖 系統提示"
+      );
+      
+      if (event.replyToken) {
+        await client.replyMessage(event.replyToken, errorResponse);
+      }
+    } catch (replyError) {
+      console.error('❌ 錯誤回覆發送失敗:', replyError);
+    }
+    
     return Promise.resolve(null);
   }
-  return bot.handleMessage(event);
 }
 
-// 健康檢查
+// 健康檢查 - 增強版
 app.get('/', (req, res) => {
-  res.json({
+  const status = {
     status: 'running',
     message: '🤖 超級智能LINE Bot運行中',
-    version: '1.0.0',
-    uptime: process.uptime()
+    version: '2.0.0',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+    memory: Math.round(process.memoryUsage().heapUsed / 1024 / 1024) + 'MB',
+    config: {
+      hasLineToken: !!config.channelAccessToken,
+      hasLineSecret: !!config.channelSecret,
+      hasGeminiKey: !!config.geminiApiKey,
+      adminUserId: config.adminUserId
+    },
+    systems: {
+      conversations: globalMemory.conversations.size,
+      userProfiles: globalMemory.userProfiles.size,
+      reminders: globalMemory.reminders.size,
+      decisions: globalMemory.decisions.size
+    }
+  };
+  
+  console.log('📊 健康檢查請求:', status);
+  res.json(status);
+});
+
+// 配置測試端點
+app.get('/test-config', (req, res) => {
+  const configTest = {
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    port: config.port,
+    timezone: process.env.TZ || 'UTC',
+    config_status: {
+      line_token: config.channelAccessToken ? '✅ 已設定' : '❌ 未設定',
+      line_secret: config.channelSecret ? '✅ 已設定' : '❌ 未設定',
+      gemini_key: config.geminiApiKey ? '✅ 已設定' : '❌ 未設定',
+      backup_ai: config.backupAiKey ? '✅ 已設定' : '❌ 未設定',
+      admin_user: config.adminUserId || '❌ 未設定'
+    },
+    apis: {
+      news_api: config.newsApiKey ? '✅ 已設定' : '❌ 未設定',
+      weather_api: config.weatherApiKey ? '✅ 已設定' : '❌ 未設定',
+      tmdb_api: config.tmdbApiKey ? '✅ 已設定' : '❌ 未設定'
+    },
+    webhook_url: `${req.protocol}://${req.get('host')}/webhook`,
+    instructions: {
+      line_bot_setup: '在 LINE Developers Console 設定 Webhook URL',
+      required_apis: 'LINE Token/Secret 和 Gemini API Key 是必填項目',
+      optional_apis: '其他 API 為選填，但建議設定以獲得完整功能'
+    }
+  };
+  
+  res.json(configTest);
+});
+
+// Webhook 測試端點
+app.get('/webhook', (req, res) => {
+  res.json({
+    message: '🤖 LINE Bot Webhook 端點運行正常',
+    timestamp: new Date().toISOString(),
+    method: 'GET requests are for testing only',
+    note: 'LINE Bot events should be sent via POST'
   });
 });
 
-// 啟動伺服器
+// 配置驗證函數
+function validateConfig() {
+  const required = {
+    'LINE_CHANNEL_ACCESS_TOKEN': config.channelAccessToken,
+    'LINE_CHANNEL_SECRET': config.channelSecret,
+    'GEMINI_API_KEY': config.geminiApiKey,
+    'ADMIN_USER_ID': config.adminUserId
+  };
+
+  const missing = [];
+  for (const [key, value] of Object.entries(required)) {
+    if (!value) {
+      missing.push(key);
+    }
+  }
+
+  if (missing.length > 0) {
+    console.error('❌ 缺少必要的環境變數:', missing.join(', '));
+    console.error('💡 請檢查 .env 檔案或 Render 環境變數設定');
+    return false;
+  }
+
+  console.log('✅ 配置驗證通過');
+  return true;
+}
+
+// 啟動伺服器 - 增強版
 app.listen(config.port, () => {
-  console.log(`🚀 超級智能LINE Bot已啟動，監聽端口 ${config.port}`);
-  console.log(`📊 系統初始化完成`);
-  console.log(`🤖 AI個性系統：已載入`);
-  console.log(`⏰ 提醒系統：已啟動`);
-  console.log(`⚖️ 決策系統：已就緒`);
-  console.log(`🔍 搜尋系統：已連接`);
-  console.log(`⚠️ 矛盾偵測：已激活`);
+  console.log('\n' + '='.repeat(60));
+  console.log('🚀 超級智能LINE Bot 啟動中...');
+  console.log('='.repeat(60));
+  
+  // 驗證配置
+  if (!validateConfig()) {
+    console.error('❌ 配置驗證失敗，請檢查環境變數');
+    process.exit(1);
+  }
+  
+  console.log(`📡 伺服器監聽端口: ${config.port}`);
+  console.log(`🌐 Webhook URL: https://your-app.onrender.com/webhook`);
+  console.log(`👨‍💼 管理員 ID: ${config.adminUserId}`);
+  console.log('');
+  console.log('📊 系統模組狀態:');
+  console.log('  🤖 AI個性系統: ✅ 已載入');
+  console.log('  ⏰ 提醒系統: ✅ 已啟動');
+  console.log('  ⚖️ 決策系統: ✅ 已就緒');
+  console.log('  🔍 搜尋系統: ✅ 已連接');
+  console.log('  ⚠️ 矛盾偵測: ✅ 已激活');
+  console.log('  📝 圖文訊息: ✅ 已準備');
+  console.log('');
+  console.log('💾 記憶體系統:');
+  console.log(`  📚 對話記憶: ${globalMemory.conversations.size} 個`);
+  console.log(`  👥 用戶檔案: ${globalMemory.userProfiles.size} 個`);
+  console.log(`  ⏰ 活躍提醒: ${globalMemory.reminders.size} 個`);
+  console.log(`  ⚖️ 待決策: ${globalMemory.decisions.size} 個`);
+  console.log('');
+  console.log('🎯 核心功能:');
+  console.log('  💬 超擬真AI聊天 (模擬個人風格)');
+  console.log('  📱 全圖文訊息回覆');
+  console.log('  ⏰ 智能提醒系統 (支援電話鬧鐘)');
+  console.log('  🔍 多功能搜尋 (天氣/新聞/電影)');
+  console.log('  ⚖️ 智能決策系統 (私訊確認)');
+  console.log('  ⚠️ 矛盾偵測 (AI分析對話)');
+  console.log('  🧠 自我學習 (個性持續優化)');
+  console.log('');
+  console.log('🔧 系統指令 (主人專用):');
+  console.log('  /狀態報告 - 查看系統總覽');
+  console.log('  /提醒清單 - 查看所有提醒');
+  console.log('  /決策待辦 - 查看待處理決策');
+  console.log('  /系統統計 - 查看使用統計');
+  console.log('  /清除歷史 - 清理對話記錄');
+  console.log('');
+  console.log('🎉 系統已完全啟動！準備為用戶提供服務');
+  console.log('='.repeat(60) + '\n');
 });
 
 // 優雅關閉

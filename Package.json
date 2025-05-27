@@ -9,7 +9,10 @@
     "build": "echo 'No build step required'",
     "test": "echo 'Tests not implemented yet'",
     "clean": "node -e \"console.log('清理緩存...'); process.exit(0);\"",
-    "status": "node -e \"console.log('系統狀態檢查...'); process.exit(0);\""
+    "status": "node -e \"console.log('系統狀態檢查...'); process.exit(0);\"",
+    "config-check": "node config-check.js",
+    "deploy-check": "npm run config-check && echo '✅ 準備部署'",
+    "fix-permissions": "chmod +x config-check.js"
   },
   "dependencies": {
     "@line/bot-sdk": "^9.3.0",
