@@ -3,7 +3,6 @@ const line = require('@line/bot-sdk');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
 const crypto = require('crypto');
-const cron = require('node-cron');
 
 // ==================== 配置設定 ====================
 const config = {
@@ -1108,23 +1107,58 @@ ${conversations.map(c => `用戶: ${c.userMessage}\nBot: ${c.botResponse}`).join
 // ==================== 統計報告系統 ====================
 class StatisticsSystem {
   constructor() {
-    // 每天早上9點發送報告
-    cron.schedule('0 9 * * *', () => {
+    // 啟動每日報告計時器
+    this.startDailyReportTimer();
+  }
+
+  startDailyReportTimer() {
+    // 計算距離下次早上9點的時間
+    const now = Utils.getTaiwanNow();
+    const tomorrow9AM = new Date(now);
+    tomorrow9AM.setHours(9, 0, 0, 0);
+    
+    // 如果現在已經過了今天9點，設定為明天9點
+    if (now.getHours() >= 9) {
+      tomorrow9AM.setDate(tomorrow9AM.getDate() + 1);
+    }
+    
+    const timeUntil9AM = tomorrow9AM.getTime() - now.getTime();
+    
+    // 設定第一次報告時間
+    setTimeout(() => {
       this.sendDailyReport();
-    }, {
-      timezone: config.timezone
-    });
+      
+      // 之後每24小時發送一次
+      setInterval(() => {
+        this.sendDailyReport();
+      }, 24 * 60 * 60 * 1000);
+      
+    }, timeUntil9AM);
+    
+    console.log(`📊 每日報告將在 ${Utils.formatTaiwanTime(tomorrow9AM)} 開始發送`);
   }
 
   async sendDailyReport() {
     try {
+      console.log('📊 開始生成每日報告...');
       const report = this.generateDailyReport();
       const reportMessage = this.createReportCard(report);
       
       await client.pushMessage(config.masterUserId, reportMessage);
-      console.log('📊 每日報告已發送');
+      console.log(`📊 每日報告已發送給 ${config.masterName}`);
     } catch (error) {
       console.error('❌ 每日報告發送失敗:', error);
+      
+      // 發送錯誤通知給主人
+      try {
+        const errorMessage = FlexBuilder.createErrorMessage(
+          `每日報告生成失敗\n錯誤時間：${Utils.formatTaiwanTime()}\n錯誤原因：${error.message}`,
+          '📊 報告系統錯誤'
+        );
+        await client.pushMessage(config.masterUserId, errorMessage);
+      } catch (notifyError) {
+        console.error('❌ 連錯誤通知都發送失敗:', notifyError);
+      }
     }
   }
 
@@ -1582,8 +1616,27 @@ app.listen(config.port, () => {
   console.log('  🏷️ 用戶身份顯示: ✅');
   console.log('  ⚙️ 群組頻率設定: ✅');
   console.log('');
+  console.log('💾 記憶體使用情況:');
+  const memUsage = process.memoryUsage();
+  console.log(`  已使用: ${Math.round(memUsage.heapUsed / 1024 / 1024)} MB`);
+  console.log(`  總計: ${Math.round(memUsage.heapTotal / 1024 / 1024)} MB`);
+  console.log('');
   console.log('🎉 系統完全就緒！等待用戶互動...');
   console.log('='.repeat(80) + '\n');
+  
+  // 發送啟動通知給主人
+  setTimeout(async () => {
+    try {
+      const startupMessage = FlexBuilder.createSystemMessage(
+        `🚀 LINE Bot v4.0 已成功啟動！\n\n🕐 啟動時間：${Utils.formatTaiwanTime()}\n📡 伺服器端口：${config.port}\n💾 記憶體：${Math.round(memUsage.heapUsed / 1024 / 1024)}MB\n\n✅ 所有核心功能已就緒\n🎯 等待用戶互動中...`,
+        '🚀 系統啟動通知'
+      );
+      await client.pushMessage(config.masterUserId, startupMessage);
+      console.log(`✅ 啟動通知已發送給 ${config.masterName}`);
+    } catch (error) {
+      console.error('❌ 啟動通知發送失敗:', error);
+    }
+  }, 2000); // 延遲2秒發送，確保系統完全啟動
 });
 
 // 優雅關閉
