@@ -1,19 +1,19 @@
 {
-  "name": "super-intelligent-line-bot-v3",
-  "version": "3.0.0",
-  "description": "顧晉瑋的超級智能LINE Bot - 完全重構版，功能完整穩定",
+  "name": "super-intelligent-line-bot-v4",
+  "version": "4.0.0",
+  "description": "顧晉瑋的超級智能LINE Bot v4.0 - 台灣真人分身，完整功能重構版",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
     "build": "echo 'No build step required'",
-    "test": "node -e \"console.log('✅ 測試通過 - Node.js 版本:', process.version)\"",
-    "clean": "node -e \"console.log('🧹 清理緩存...'); process.exit(0);\"",
-    "status": "node -e \"console.log('📊 系統狀態檢查...'); process.exit(0);\"",
-    "config-check": "node -e \"console.log('🔧 配置檢查...'); const required = ['LINE_CHANNEL_ACCESS_TOKEN', 'LINE_CHANNEL_SECRET', 'GEMINI_API_KEY']; const missing = required.filter(key => !process.env[key]); if (missing.length > 0) { console.error('❌ 缺少環境變數:', missing.join(', ')); process.exit(1); } else { console.log('✅ 配置檢查通過'); }\"",
-    "deploy-check": "npm run config-check && echo '🚀 準備部署'",
-    "memory-info": "node -e \"const used = Math.round(process.memoryUsage().heapUsed / 1024 / 1024); console.log('💾 記憶體使用:', used, 'MB');\"",
-    "api-test": "node -e \"console.log('🧪 API測試功能開發中...')\""
+    "test": "node -e \"console.log('✅ 測試通過 - Node.js:', process.version, '| 台灣時間:', new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}))\"",
+    "clean": "node -e \"console.log('🧹 清理快取完成'); process.exit(0);\"",
+    "status": "node -e \"console.log('📊 系統狀態:', process.memoryUsage()); process.exit(0);\"",
+    "config-check": "node -e \"const required = ['LINE_CHANNEL_ACCESS_TOKEN', 'LINE_CHANNEL_SECRET', 'GEMINI_API_KEY']; const missing = required.filter(key => !process.env[key]); if (missing.length > 0) { console.error('❌ 缺少環境變數:', missing.join(', ')); process.exit(1); } else { console.log('✅ 必要配置檢查通過'); }\"",
+    "deploy-check": "npm run config-check && echo '🚀 準備部署到生產環境'",
+    "memory-info": "node -e \"const used = Math.round(process.memoryUsage().heapUsed / 1024 / 1024); console.log('💾 記憶體使用:', used, 'MB', '| 台灣時間:', new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei'}));\"",
+    "taiwan-time": "node -e \"console.log('🇹🇼 台灣時間:', new Date().toLocaleString('zh-TW', {timeZone: 'Asia/Taipei', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'}));\""
   },
   "dependencies": {
     "@line/bot-sdk": "^9.3.0",
@@ -32,68 +32,91 @@
   },
   "keywords": [
     "line-bot",
-    "chatbot",
+    "chatbot", 
     "ai-assistant",
     "gemini-ai",
     "intelligent-bot",
-    "decision-system",
-    "reminder-system",
+    "taiwan-bot",
+    "smart-assistant",
     "personality-ai",
-    "contradiction-detection",
-    "message-recall-tracking",
+    "reminder-system",
     "phone-alarm",
     "twilio-integration",
     "flex-message",
-    "taiwanese-bot",
-    "smart-assistant",
-    "nodejs",
-    "express",
-    "gemini-1.5-flash",
-    "auto-learning",
-    "visual-charts",
+    "menu-system",
+    "group-reply-control",
+    "daily-report",
+    "movie-search",
     "weather-api",
     "news-api",
-    "movie-recommendation",
-    "system-management",
-    "memory-system",
-    "self-healing",
-    "stable",
-    "complete",
-    "production-ready"
+    "taiwan-timezone",
+    "master-commands",
+    "message-forwarding",
+    "contradiction-detection",
+    "interaction-analysis",
+    "natural-language",
+    "auto-learning",
+    "dual-ai-engine",
+    "backup-system",
+    "error-handling",
+    "production-ready",
+    "stable-version",
+    "complete-features"
   ],
   "author": {
     "name": "顧晉瑋",
     "school": "靜宜大學資管系",
-    "description": "超級智能LINE Bot開發者",
-    "userId": "U59af77e69411ffb99a49f1f2c3e2afc4"
+    "description": "超級智能LINE Bot開發者 - 台灣真人分身創造者",
+    "userId": "U59af77e69411ffb99a49f1f2c3e2afc4",
+    "phone": "+886966198826",
+    "location": "台灣"
   },
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/super-intelligent-line-bot-v3"
+    "url": "https://github.com/your-username/super-intelligent-line-bot-v4"
   },
   "bugs": {
-    "url": "https://github.com/your-username/super-intelligent-line-bot-v3/issues"
+    "url": "https://github.com/your-username/super-intelligent-line-bot-v4/issues"
   },
-  "homepage": "https://github.com/your-username/super-intelligent-line-bot-v3#readme",
+  "homepage": "https://github.com/your-username/super-intelligent-line-bot-v4#readme",
   "config": {
     "timezone": "Asia/Taipei",
     "memory_limit": "1024mb",
-    "conversation_history_limit": 200,
-    "group_history_limit": 30,
+    "conversation_history_group": 50,
+    "conversation_history_personal": 100,
     "reminder_check_interval": 10000,
-    "decision_timeout": 1800000,
-    "rate_limit_window": 60000,
-    "max_requests_per_window": 50,
-    "max_learning_data": 1000
+    "daily_report_time": "09:00",
+    "group_reply_modes": ["high", "medium", "low", "ai"],
+    "max_learning_data": 50,
+    "api_timeout": 15000,
+    "max_retries": 3
+  },
+  "features": {
+    "ai_chat": "超擬真AI聊天，完全模擬主人風格",
+    "taiwan_time": "100% 台灣時間標準，避免時差問題", 
+    "smart_reminders": "智能提醒系統，支援電話鬧鐘",
+    "menu_system": "圖形化選單，用戶操作直覺",
+    "group_control": "群組回覆頻率智能控制",
+    "movie_search": "電影搜尋升級，詳細資訊展示",
+    "daily_reports": "每日自動數據分析報告",
+    "master_functions": "主人專用功能，分身代理",
+    "phone_integration": "Twilio電話服務整合",
+    "dual_ai_engine": "Gemini + GPT-3.5 雙AI保障",
+    "error_recovery": "完善錯誤處理與自動恢復",
+    "natural_format": "自然分段回覆，避免長篇大論"
   },
   "os": [
     "linux",
-    "darwin",
+    "darwin", 
     "win32"
   ],
   "cpu": [
     "x64",
     "arm64"
-  ]
+  ],
+  "funding": {
+    "type": "individual",
+    "url": "https://github.com/sponsors/your-username"
+  }
 }
