@@ -1,0 +1,156 @@
+services:
+  - type: web
+    name: super-intelligent-line-bot
+    env: node
+    region: singapore  # 選擇離台灣較近的區域
+    plan: standard     # 升級到 standard 以支援更多功能和記憶體
+    buildCommand: |
+      echo "開始安裝依賴項目..."
+      npm install
+      echo "依賴項目安裝完成"
+    startCommand: |
+      echo "🚀 啟動超級智能LINE Bot..."
+      npm start
+    
+    # 環境變數配置
+    envVars:
+      # Node.js 環境設定
+      - key: NODE_ENV
+        value: production
+      - key: TZ
+        value: Asia/Taipei
+      - key: PORT
+        value: 3000
+      
+      # LINE Bot API 設定
+      - key: LINE_CHANNEL_ACCESS_TOKEN
+        value: G5/Jatw/Mm7gpHjRnVG89Mxp+6QWXINk4mGkga8o3g9TRa96NXiOed5ylkNZjuUtGHXFKCV46xX1t73PZkYdjlqIFoJHe0XiPUP4EyRy/jwJ6sqRtXivrQNA0WH+DK9pLUKg/ybSZ1mvGywuK8upBAdB04t89/1O/w1cDnyilFU=
+      - key: LINE_CHANNEL_SECRET
+        value: ff89f01585f2b68301b8f8911174cd87
+      
+      # AI API 設定 - 主要 AI 引擎
+      - key: GEMINI_API_KEY
+        value: AIzaSyBWCitsjkm7DPe_aREubKIZjqmgXafVKNE
+      
+      # 備用 AI API 設定 - GPT-3.5 備用引擎
+      - key: BACKUP_AI_KEY
+        value: sk-U8sgp8YW0jX3flzFCM1azu85GS6WbHlMyqU7L0ZDer9n8aUM
+      - key: BACKUP_AI_URL
+        value: https://api.chatanywhere.org/v1
+      
+      # 外部 API 服務
+      - key: NEWS_API_KEY
+        value: 5807e3e70bd2424584afdfc6e932108b
+      - key: TMDB_API_KEY
+        value: eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIyMzI4YmU1YzdhNDA1OTczZDdjMjA0NDlkYmVkOTg4OCIsIm5iZiI6MS43NDYwNzg5MDI5MTgwMDAyZSs5LCJzdWIiOiI2ODEzMGNiNjgyODI5Y2NhNzExZmJkNDkiLCJzY29wZXMiOlsiYXBpX3JlYWQiXSwidmVyc2lvbiI6MX0.FQlIdfWlf4E0Tw9sYRF7txbWymAby77KnHjTVNFSpdM
+      - key: WEATHER_API_KEY
+        value: CWA-C80C73F3-7042-4D8D-A88A-D39DD2CFF841
+      
+      # 搜尋功能配置
+      - key: SEARCH_API_KEY
+        value: your-google-search-api-key  # 需要申請 Google Custom Search API Key
+      - key: SEARCH_ENGINE_ID
+        value: 526082b509a1942a7  # 你的 Google Custom Search Engine ID
+      
+      # 電話鬧鐘功能（Twilio）
+      - key: TWILIO_ACCOUNT_SID
+        value: your-twilio-account-sid  # 需要申請 Twilio 帳號
+      - key: TWILIO_AUTH_TOKEN
+        value: your-twilio-auth-token
+      - key: TWILIO_PHONE_NUMBER
+        value: your-twilio-phone-number
+      
+      # 系統管理員設定
+      - key: ADMIN_USER_ID
+        value: demo326  # 你的 LINE ID
+      - key: OWNER_LINE_ID
+        value: demo326  # 主人的 LINE ID（用於決策通知）
+      
+      # 系統效能優化
+      - key: NODE_OPTIONS
+        value: "--max-old-space-size=1024 --optimize-for-size"
+      - key: UV_THREADPOOL_SIZE
+        value: "16"
+      
+      # 功能開關設定
+      - key: ENABLE_CONTRADICTION_DETECTION
+        value: "true"
+      - key: ENABLE_MESSAGE_RECALL_TRACKING
+        value: "true"
+      - key: ENABLE_PHONE_ALARM
+        value: "false"  # 預設關閉，需要 Twilio 設定後開啟
+      - key: ENABLE_AUTO_LEARNING
+        value: "true"
+      - key: ENABLE_DECISION_SYSTEM
+        value: "true"
+      
+      # 記憶體和快取設定
+      - key: MAX_CONVERSATION_HISTORY
+        value: "30"     # 群組對話記憶條數
+      - key: MAX_PERSONAL_HISTORY
+        value: "200"    # 個人對話記憶條數
+      - key: REMINDER_CHECK_INTERVAL
+        value: "10000"  # 提醒檢查間隔（毫秒）
+      - key: DECISION_TIMEOUT
+        value: "1800000" # 決策超時時間（30分鐘）
+      
+      # 安全性設定
+      - key: API_RATE_LIMIT
+        value: "100"    # API 呼叫頻率限制
+      - key: MAX_MESSAGE_LENGTH
+        value: "2000"   # 最大訊息長度
+    
+    # 健康檢查設定
+    healthCheckPath: /
+    
+    # 自動部署設定
+    autoDeploy: true
+    
+    # 建置設定
+    buildFilter:
+      paths:
+        - app.js
+        - package.json
+        - package-lock.json
+      ignoredPaths:
+        - README.md
+        - .gitignore
+        - docs/**
+    
+    # 資源配置
+    disk:
+      name: bot-storage
+      size: 2GB
+      mountPath: /tmp/bot-data
+    
+    # 預拉取設定（加速啟動）
+    preDeployCommand: |
+      echo "🔧 預部署設定..."
+      echo "檢查 Node.js 版本: $(node --version)"
+      echo "檢查 NPM 版本: $(npm --version)"
+      echo "清理快取..."
+      npm cache clean --force
+    
+    # 部署後指令
+    postDeployCommand: |
+      echo "🎉 部署完成！"
+      echo "📱 LINE Bot 服務已啟動"
+      echo "🤖 AI 個性系統已載入"
+      echo "⏰ 提醒系統已激活"
+      echo "⚖️ 決策系統已就緒"
+      echo "🔍 搜尋功能已連接"
+      echo "📊 系統監控已開啟"
+
+# 可選：資料庫服務（如果需要持久化存儲）
+# databases:
+#   - name: bot-database
+#     databaseName: line_bot_db
+#     user: bot_user
+#     region: singapore
+
+# 可選：Redis 快取服務
+# services:
+#   - type: redis
+#     name: bot-cache
+#     region: singapore
+#     plan: starter

@@ -1,0 +1,93 @@
+{
+  "name": "super-intelligent-line-bot",
+  "version": "2.0.0",
+  "description": "顧晉瑋的超級智能LINE Bot - 完整功能版本",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "build": "echo 'No build step required'",
+    "test": "echo 'Tests not implemented yet'",
+    "clean": "node -e \"console.log('清理緩存...'); process.exit(0);\"",
+    "status": "node -e \"console.log('系統狀態檢查...'); process.exit(0);\""
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^9.3.0",
+    "@google/generative-ai": "^0.21.0",
+    "express": "^4.19.2",
+    "axios": "^1.7.7",
+    "crypto": "^1.0.1",
+    "twilio": "^5.2.2",
+    "node-cron": "^3.0.3",
+    "moment": "^2.30.1",
+    "moment-timezone": "^0.5.45",
+    "fs-extra": "^11.2.0",
+    "uuid": "^10.0.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4",
+    "@types/node": "^22.5.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "keywords": [
+    "line-bot",
+    "chatbot",
+    "ai-assistant",
+    "gemini-ai",
+    "intelligent-bot",
+    "decision-system",
+    "reminder-system",
+    "personality-ai",
+    "contradiction-detection",
+    "message-forwarding",
+    "flex-message",
+    "taiwanese-bot",
+    "smart-assistant",
+    "nodejs",
+    "express",
+    "gemini-1.5-flash",
+    "auto-learning",
+    "visual-charts",
+    "weather-api",
+    "news-api",
+    "movie-recommendation",
+    "phone-alarm",
+    "system-management",
+    "memory-system"
+  ],
+  "author": {
+    "name": "顧晉瑋",
+    "school": "靜宜大學資管系",
+    "email": "your-email@example.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/super-intelligent-line-bot"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/super-intelligent-line-bot/issues"
+  },
+  "homepage": "https://github.com/your-username/super-intelligent-line-bot#readme",
+  "config": {
+    "timezone": "Asia/Taipei",
+    "memory_limit": "512mb",
+    "conversation_history_limit": 30,
+    "personal_history_limit": 200,
+    "reminder_check_interval": 10000,
+    "decision_timeout": 1800000
+  },
+  "os": [
+    "linux",
+    "darwin",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}
