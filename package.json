@@ -2,10 +2,10 @@
   "name": "fixed-smart-line-chatbot-v9.1",
   "version": "9.1.0",
   "description": "顧晉瑋的修復版超智能 LINE Bot - 已修復 Gemini API 和時間解析問題",
-  "main": "app.js",
+  "main": "main.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "nodemon app.js",
+    "start": "node main.js",
+    "dev": "nodemon main.js",
     "build": "echo 'No build step required'",
     "test": "echo 'Tests not implemented yet'"
   },
