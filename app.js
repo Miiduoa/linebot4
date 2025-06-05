@@ -1277,6 +1277,10 @@ class SuperIntelligentLineBot {
       else if (messageText.includes('設定回覆頻率')) {
         response = await this.handleFrequencySettings(messageText, userId);
       }
+      // 傳訊息給其他人
+      else if (messageText.startsWith('傳訊息給') || messageText.startsWith('轉發給')) {
+        response = await this.handleForwardMessage(messageText, userId);
+      }
       // 系統狀態（主人專用）
       else if (messageText === '/狀態' && UserManager.isMaster(userId)) {
         response = { message: this.getSystemStatus() };
@@ -1445,6 +1449,48 @@ class SuperIntelligentLineBot {
         '⚙️ 設定完成'
       )
     };
+  }
+
+  async handleForwardMessage(messageText, userId) {
+    if (!UserManager.isMaster(userId)) {
+      return {
+        message: FlexBuilder.createErrorMessage(
+          `只有 ${config.masterName} 可以使用此功能`,
+          '🔐 權限不足'
+        )
+      };
+    }
+
+    const match = messageText.match(/傳(?:訊息)?給\s+(\S+)\s+([\s\S]+)/);
+    if (!match) {
+      return {
+        message: FlexBuilder.createErrorMessage(
+          '格式錯誤，請使用：傳訊息給 [用戶ID] [內容]',
+          '❌ 格式錯誤'
+        )
+      };
+    }
+
+    const targetId = match[1];
+    const content = match[2];
+
+    try {
+      await client.pushMessage(targetId, { type: 'text', text: content });
+      return {
+        message: FlexBuilder.createSystemMessage(
+          `✅ 已傳送訊息給 ${targetId}\n\n內容：${content}`,
+          '📨 傳訊息成功'
+        )
+      };
+    } catch (error) {
+      console.error('❌ 傳訊息失敗:', error);
+      return {
+        message: FlexBuilder.createErrorMessage(
+          '訊息傳送失敗，請確認用戶ID是否正確',
+          '❌ 傳送失敗'
+        )
+      };
+    }
   }
 
   async handleGeneralConversation(messageText, userId, isGroup) {
