@@ -3,6 +3,7 @@ const line = require('@line/bot-sdk');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const axios = require('axios');
 const crypto = require('crypto');
+const packageInfo = require('./package.json');
 
 // ==================== 配置設定 ====================
 const config = {
@@ -1281,6 +1282,10 @@ class SuperIntelligentLineBot {
       else if (messageText.startsWith('傳訊息給') || messageText.startsWith('轉發給')) {
         response = await this.handleForwardMessage(messageText, userId);
       }
+      // 功能列表
+      else if (['功能', '功能列表', '/功能', '/功能列表', 'features'].includes(messageText)) {
+        response = { message: this.getFeatureList() };
+      }
       // 系統狀態（主人專用）
       else if (messageText === '/狀態' && UserManager.isMaster(userId)) {
         response = { message: this.getSystemStatus() };
@@ -1547,6 +1552,14 @@ class SuperIntelligentLineBot {
                    `🕒 運行時間：${uptime}小時`;
 
     return FlexBuilder.createBasicCard('📊 系統狀態', content, '#4A90E2');
+  }
+
+  getFeatureList() {
+    const features = packageInfo.features || {};
+    const content = Object.values(features)
+      .map(f => `• ${f}`)
+      .join('\n');
+    return FlexBuilder.createBasicCard('🎛️ 功能列表', content, '#34C759');
   }
 }
 
