@@ -34,6 +34,10 @@ if (config.geminiApiKey) {
   model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 }
 
+// 對話記錄長度限制
+const HISTORY_LIMIT_PERSONAL = 200;
+const HISTORY_LIMIT_GROUP = 30;
+
 // ==================== 全域記憶系統 ====================
 const Memory = {
   // 用戶資料
@@ -1232,21 +1236,26 @@ class SuperIntelligentLineBot {
   async handleMessage(event) {
     const { message, source, replyToken } = event;
     const messageText = message.text;
-    const userId = source.userId || source.groupId;
-    const isGroup = source.type === 'group';
+    const senderId = source.userId;
+    const groupId = source.type === 'group' ? source.groupId : null;
+    const contextId = groupId || senderId;
+    const isGroup = !!groupId;
 
-    console.log(`👤 收到訊息 [${userId}]: ${messageText}`);
+    console.log(`👤 收到訊息 [${senderId}${groupId ? '@' + groupId : ''}]: ${messageText}`);
     Memory.stats.totalMessages++;
 
     try {
-      // 更新用戶資訊
-      const user = await UserManager.getUserInfo(userId);
-      
-      // 記錄對話
-      this.recordConversation(userId, messageText, 'user');
+      // 更新發送者資訊
+      const user = await UserManager.getUserInfo(senderId);
 
-      // 矛盾偵測 (異步)
-      this.contradictionDetector.detectContradiction(userId, messageText)
+      // 記錄對話（群組與個人）
+      this.recordConversation(contextId, messageText, 'user', isGroup);
+      if (isGroup) {
+        this.recordConversation(senderId, messageText, 'user', false);
+      }
+
+      // 矛盾偵測 (針對個人對話)
+      this.contradictionDetector.detectContradiction(senderId, messageText)
         .catch(error => console.error('矛盾偵測失敗:', error));
 
       // 處理各種指令
@@ -1255,16 +1264,16 @@ class SuperIntelligentLineBot {
       // 提醒相關
       if (messageText.includes('提醒') || messageText.includes('鬧鐘')) {
         if (messageText.includes('取消提醒')) {
-          response = await this.handleCancelReminder(messageText, userId);
+          response = await this.handleCancelReminder(messageText, senderId);
         } else if (messageText === '查看我的提醒') {
-          response = { message: this.reminderSystem.listUserReminders(userId) };
+          response = { message: this.reminderSystem.listUserReminders(senderId) };
         } else {
-          response = await this.handleReminderRequest(messageText, userId);
+          response = await this.handleReminderRequest(messageText, senderId);
         }
       }
       // 決策相關
       else if (messageText.includes('決策')) {
-        response = await this.handleDecisionRequest(messageText, userId);
+        response = await this.handleDecisionRequest(messageText, senderId);
       }
       // 電影查詢
       else if (messageText.includes('電影') && !messageText.includes('電影詳情')) {
@@ -1276,23 +1285,23 @@ class SuperIntelligentLineBot {
       }
       // 設定回覆頻率
       else if (messageText.includes('設定回覆頻率')) {
-        response = await this.handleFrequencySettings(messageText, userId);
+        response = await this.handleFrequencySettings(messageText, senderId, groupId);
       }
       // 傳訊息給其他人
       else if (messageText.startsWith('傳訊息給') || messageText.startsWith('轉發給')) {
-        response = await this.handleForwardMessage(messageText, userId);
+        response = await this.handleForwardMessage(messageText, senderId);
       }
       // 功能列表
       else if (['功能', '功能列表', '/功能', '/功能列表', 'features'].includes(messageText)) {
         response = { message: this.getFeatureList() };
       }
       // 系統狀態（主人專用）
-      else if (messageText === '/狀態' && UserManager.isMaster(userId)) {
+      else if (messageText === '/狀態' && UserManager.isMaster(senderId)) {
         response = { message: this.getSystemStatus() };
       }
       // 一般對話
       else {
-        response = await this.handleGeneralConversation(messageText, userId, isGroup);
+        response = await this.handleGeneralConversation(messageText, contextId, senderId, isGroup);
       }
 
       if (response) {
@@ -1320,21 +1329,21 @@ class SuperIntelligentLineBot {
     }
   }
 
-  recordConversation(userId, message, type) {
-    if (!Memory.conversations.has(userId)) {
-      Memory.conversations.set(userId, []);
+  recordConversation(targetId, message, type, isGroup = false) {
+    if (!Memory.conversations.has(targetId)) {
+      Memory.conversations.set(targetId, []);
     }
-    
-    const conversation = Memory.conversations.get(userId);
+
+    const conversation = Memory.conversations.get(targetId);
     conversation.push({
       message,
       type,
       timestamp: Utils.getTaiwanNow()
     });
 
-    // 保持最近50條對話
-    if (conversation.length > 50) {
-      conversation.splice(0, conversation.length - 50);
+    const limit = isGroup ? HISTORY_LIMIT_GROUP : HISTORY_LIMIT_PERSONAL;
+    if (conversation.length > limit) {
+      conversation.splice(0, conversation.length - limit);
     }
   }
 
@@ -1429,16 +1438,20 @@ class SuperIntelligentLineBot {
     };
   }
 
-  async handleFrequencySettings(messageText, userId) {
+  async handleFrequencySettings(messageText, senderId, groupId = null) {
     const frequencyMatch = messageText.match(/設定回覆頻率\s+(high|medium|low|ai)/);
     if (!frequencyMatch) {
       return FlexBuilder.createFrequencySelectionMenu();
     }
 
     const frequency = frequencyMatch[1];
-    const user = Memory.users.get(userId);
-    if (user) {
-      user.settings.groupReplyFrequency = frequency;
+    if (groupId) {
+      Memory.groupSettings.set(groupId, { replyFrequency: frequency });
+    } else {
+      const user = Memory.users.get(senderId);
+      if (user) {
+        user.settings.groupReplyFrequency = frequency;
+      }
     }
 
     const frequencyNames = {
@@ -1450,14 +1463,14 @@ class SuperIntelligentLineBot {
 
     return {
       message: FlexBuilder.createSystemMessage(
-        `✅ 已設定群組回覆頻率為：${frequencyNames[frequency]}\n👤 設定者：${UserManager.getDisplayName(userId)}\n🕐 台灣時間：${Utils.formatTaiwanTime()}`,
+        `✅ 已設定群組回覆頻率為：${frequencyNames[frequency]}\n👤 設定者：${UserManager.getDisplayName(senderId)}\n🕐 台灣時間：${Utils.formatTaiwanTime()}`,
         '⚙️ 設定完成'
       )
     };
   }
 
-  async handleForwardMessage(messageText, userId) {
-    if (!UserManager.isMaster(userId)) {
+  async handleForwardMessage(messageText, senderId) {
+    if (!UserManager.isMaster(senderId)) {
       return {
         message: FlexBuilder.createErrorMessage(
           `只有 ${config.masterName} 可以使用此功能`,
@@ -1498,13 +1511,13 @@ class SuperIntelligentLineBot {
     }
   }
 
-  async handleGeneralConversation(messageText, userId, isGroup) {
-    const user = Memory.users.get(userId);
-    const conversationHistory = Memory.conversations.get(userId) || [];
+  async handleGeneralConversation(messageText, contextId, senderId, isGroup) {
+    const user = Memory.users.get(senderId);
+    const conversationHistory = Memory.conversations.get(contextId) || [];
 
     // 群組回覆頻率判斷
     if (isGroup) {
-      const groupSettings = Memory.groupSettings.get(userId);
+      const groupSettings = Memory.groupSettings.get(contextId);
       if (!this.aiPersonality.shouldReplyInGroup(messageText, groupSettings, user)) {
         return null; // 不回覆
       }
@@ -1518,12 +1531,15 @@ class SuperIntelligentLineBot {
       );
 
       // 記錄AI回覆
-      this.recordConversation(userId, aiResponse, 'bot');
+      this.recordConversation(contextId, aiResponse, 'bot', isGroup);
+      if (isGroup) {
+        this.recordConversation(senderId, aiResponse, 'bot', false);
+      }
 
       return {
         message: FlexBuilder.createChatResponse(
           aiResponse,
-          UserManager.getDisplayName(userId)
+          UserManager.getDisplayName(senderId)
         )
       };
     } catch (error) {
